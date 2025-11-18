@@ -1,0 +1,24 @@
+# ships_config.yaml - 船舶模拟配置
+
+# 模拟的船只列表
+simulated_ships:
+  - mmsi: 123456789   # 船舶唯一标识符 (MMSI)
+    latitude: 34.65   # 初始纬度 (度)
+    longitude: 135.5  # 初始经度 (度)
+    heading: 45.0     # 初始航向 (度, 正北为0)
+    sog: 10.0         # 对地航速 (节)
+    rot: 0.0          # 转向率 (度/分钟), 右转为正
+
+  - mmsi: 987654321
+    latitude: 34.66
+    longitude: 135.52
+    heading: 0.0
+    sog: 12.0
+    rot: 10.0         # 右转
+
+  - mmsi: 555555555
+    latitude: 34.64
+    longitude: 135.48
+    heading: 270.0    # 向西
+    sog: 5.5
+    rot: -5.0         # 左转
