@@ -1,24 +1,24 @@
-# ships_config.yaml - 船舶模拟配置
-
-# 模拟的船只列表
 simulated_ships:
-  - mmsi: 123456789   # 船舶唯一标识符 (MMSI)
-    latitude: 34.65   # 初始纬度 (度)
-    longitude: 135.5  # 初始经度 (度)
-    heading: 45.0     # 初始航向 (度, 正北为0)
-    sog: 10.0         # 对地航速 (节)
-    rot: 0.0          # 转向率 (度/分钟), 右转为正
+  # 第一艘船 (移到更靠江心的位置)
+  - mmsi: 123456789
+    latitude: 31.365
+    longitude: 121.790  # <--- 改到了 121.790 (往西移)
+    heading: 150.0      # 顺流而下
+    sog: 10.0
+    rot: 0.0
 
+  # 第二艘船 (这就是刚才上岸那艘，给它往左狠狠挪一下)
   - mmsi: 987654321
-    latitude: 34.66
-    longitude: 135.52
-    heading: 0.0
+    latitude: 31.370
+    longitude: 121.785  # <--- 改到了 121.785 (更靠西)
+    heading: 150.0
     sog: 12.0
-    rot: 10.0         # 右转
+    rot: 0.0
 
+ # 第三艘船 (强行拖回水里)
   - mmsi: 555555555
-    latitude: 34.64
-    longitude: 135.48
-    heading: 270.0    # 向西
-    sog: 5.5
-    rot: -5.0         # 左转
+    latitude: 31.360    # 稍微往北提一点
+    longitude: 121.792  # <--- 之前是 121.810 (岸上)，改成 121.792 (江里)
+    heading: 330.0      # 逆流而上 (西北方向)
+    sog: 8.0
+    rot: 0.0

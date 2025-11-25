@@ -8,6 +8,8 @@ from pyais.encode import encode_msg   # 用于编码NMEA
 import yaml
 import os
 from ament_index_python.packages import get_package_share_directory
+import random
+from shapely.geometry import Point, Polygon
 
 
 class AisSimulatorNode(Node):
@@ -56,6 +58,16 @@ class AisSimulatorNode(Node):
         self.timer_ = self.create_timer(self.timer_period, self.timer_callback)
 
         self.get_logger().info(f'AIS 模拟器已启动，模拟 {len(self.simulated_ships)} 艘船')
+
+        river_coords = [
+            (121.780, 31.380), # 左上
+            (121.850, 31.340), # 右上
+            (121.840, 31.320), # 右下
+            (121.770, 31.360), # 左下
+            (121.780, 31.380)  # 闭合
+        ]
+        self.safe_zone = Polygon(river_coords)
+        self.get_logger().info('电子围栏初始化完成。')
 
     def load_ship_configs(self, filename):
         package_name = 'ais_simulator' 
@@ -158,22 +170,34 @@ class AisSimulatorNode(Node):
             return -126
 
     def update_ship_state(self, ship_state):
-        # 位置更新算法，目前为地球表面简化模型，可能要限制在长江流域附近
+        """
+        更新位置并包含避障逻辑 + 【新增】随机扰动
+        """
         dt = self.timer_period  # 时间间隔 (秒)
 
-        # 1. 更新航向
-        rot_deg_per_sec = ship_state['rot'] / 60.0
-        ship_state['heading'] += rot_deg_per_sec * dt
-        ship_state['heading'] = ship_state['heading'] % 360.0
+        # --- 【新增】 模拟风浪和人为微调 ---
+        # 1. 持续的微小漂移 (模拟水流/风): -0.5度 到 +0.5度 之间随机
+        drift = random.uniform(-0.5, 0.5)
+        
+        # 2. 偶尔的主动变向 (模拟船长调整航向): 
+        # 每秒有 5% 的概率发生稍微大一点的转向 (-2 到 2 度)
+        if random.random() < 0.05:
+            drift += random.uniform(-2.0, 2.0)
 
-        # 2. 更新位置
+        # 3. 计算新航向
+        rot_deg_per_sec = ship_state['rot'] / 60.0
+        # 将随机漂移加到航向计算中
+        next_heading = ship_state['heading'] + rot_deg_per_sec * dt + drift
+        next_heading = next_heading % 360.0
+
+        # --- 以下是原来的位置计算逻辑 (保持不变) ---
         speed_mps = ship_state['sog'] * 0.514444
         distance_meters = speed_mps * dt
 
         if distance_meters == 0:
             return 
 
-        bearing_rad = math.radians(ship_state['heading'])
+        bearing_rad = math.radians(next_heading)
         lat1_rad = math.radians(ship_state['latitude'])
         lon1_rad = math.radians(ship_state['longitude'])
 
@@ -189,9 +213,23 @@ class AisSimulatorNode(Node):
             math.cos(ang_dist) - math.sin(lat1_rad) * math.sin(lat2_rad)
         )
 
-        ship_state['latitude'] = math.degrees(lat2_rad)
-        ship_state['longitude'] = math.degrees(lon2_rad)
+        next_lat = math.degrees(lat2_rad)
+        next_lon = math.degrees(lon2_rad)
 
+        # --- 碰撞检测逻辑 (保持不变) ---
+        next_point = Point(next_lon, next_lat)
+
+        if self.safe_zone.contains(next_point):
+            # 安全：更新位置和航向
+            ship_state['latitude'] = next_lat
+            ship_state['longitude'] = next_lon
+            ship_state['heading'] = next_heading
+        else:
+            # 撞墙：执行避障
+            self.get_logger().warn(f"MMSI {ship_state['mmsi']} 触碰边界！正在自动转向...")
+            turn_angle = random.randint(120, 240)
+            ship_state['heading'] = (ship_state['heading'] + turn_angle) % 360.0
+            ship_state['rot'] = 0
 
 def main(args=None):
     rclpy.init(args=args)
