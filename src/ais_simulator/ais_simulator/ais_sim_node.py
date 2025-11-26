@@ -13,7 +13,7 @@ from shapely.geometry import Point, Polygon
 
 
 class AisSimulatorNode(Node):
-
+    #初始化相关属性
     def __init__(self):
         super().__init__('ais_simulator_node')
 
@@ -28,6 +28,7 @@ class AisSimulatorNode(Node):
         self.startup_ok = False
         # 地球半径 (米)
         self.EARTH_RADIUS_METERS = 6371e3
+        self.SAFETY_DISTANCE = 0.0005
 
         try:
             #读取船舶配置
@@ -69,6 +70,11 @@ class AisSimulatorNode(Node):
         self.safe_zone = Polygon(river_coords)
         self.get_logger().info('电子围栏初始化完成。')
 
+    #计算两船之间距离
+    def calculate_distance(self, lat1, lon1, lat2, lon2):
+        return math.sqrt((lat1 - lat2)**2 + (lon1 - lon2)**2)
+
+    #加载模拟船的配置
     def load_ship_configs(self, filename):
         package_name = 'ais_simulator' 
         
@@ -101,20 +107,19 @@ class AisSimulatorNode(Node):
             self.get_logger().error(f"无法加载或解析船舶配置文件 '{filename}'。错误: {e}")
             self.get_logger().error(f"请确保已修改 setup.py 将 '{filename}' 复制到 '{package_name}' 的共享目录！")
             raise # 重新抛出异常，让 __init__ 退出
-        
+    
+    #定时器的主回调函数，每秒执行一次。
     def timer_callback(self):
-        """
-        定时器的主回调函数，每秒执行一次。
-        """
         # 遍历我们内部列表中的每一艘船
         for ship_state in self.simulated_ships:
-
-            # 1. 更新这艘船的状态 (推算1秒后的位置)
+            # 动态检测碰撞
+            self.avoid_collision_with_other_ships(ship_state, self.simulated_ships)
+            # 更新这艘船的状态 (推算1秒后的位置)
             self.update_ship_state(ship_state)
-
-            # 2. 将状态编码为NMEA句子并发送
+            # 将状态编码为NMEA句子并发送
             self.generate_and_send_nmea(ship_state)
 
+    #将信息编码成NMEA字符串发送
     def generate_and_send_nmea(self, ship_state):
         """
         核心函数：将Python字典转换为NMEA !AIVDM 字符串并发送。
@@ -157,25 +162,43 @@ class AisSimulatorNode(Node):
         except Exception as e:
             self.get_logger().warn(f'编码或发送NMEA时出错: {e}')
 
+    #辅助函数：将 度/分钟 转换为AIS的ROT字段值
     def convert_rot_to_ais(self, rot_deg_per_min):
-        """ 辅助函数：将 度/分钟 转换为AIS的ROT字段值 """
         if rot_deg_per_min == 0:
             return 0
         # 这是一个简化的转换，真实AIS ROT字段是非线性的
-        # 126 = 右转 > 5 deg/30s
-        # -126 = 左转 > 5 deg/30s
         if rot_deg_per_min > 0:
             return 126
         else:
             return -126
 
+    #船只之间互相避让,检查当前船只与其他船只的距离，并在距离过近时修改航向
+    def avoid_collision_with_other_ships(self, current_ship, all_ships):
+        for other_ship in all_ships:
+            if current_ship is other_ship:
+                continue
+            
+            #检测两船间的距离
+            distance = self.calculate_distance(
+                current_ship['latitude'], current_ship['longitude'], other_ship['latitude'], other_ship['longitude']
+            )
+            #距离小于安全距离则调整方向
+            if distance < self.SAFETY_DISTANCE:
+                self.get_logger().warn(f"{current_ship['mmsi']} 发现碰撞风险！")
+                
+                current_ship['heading'] = (current_ship['heading'] + 30.0) % 360
+                current_ship['rot'] = 5.0
+                return
+            
+            #恢复直航
+            if current_ship['rot'] != 0.0:
+                current_ship['rot'] = 0.0
+
+    #更新位置并包含避障逻辑 + 随机扰动
     def update_ship_state(self, ship_state):
-        """
-        更新位置并包含避障逻辑 + 【新增】随机扰动
-        """
         dt = self.timer_period  # 时间间隔 (秒)
 
-        # --- 【新增】 模拟风浪和人为微调 ---
+        # 模拟风浪和人为微调
         # 1. 持续的微小漂移 (模拟水流/风): -0.5度 到 +0.5度 之间随机
         drift = random.uniform(-0.5, 0.5)
         
