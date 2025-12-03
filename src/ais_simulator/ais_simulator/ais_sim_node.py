@@ -11,11 +11,17 @@ from ament_index_python.packages import get_package_share_directory
 import random
 from shapely.geometry import Point, Polygon
 
+from ais_simulator.map_loader import MapLoader
 
 class AisSimulatorNode(Node):
     #初始化相关属性
     def __init__(self):
         super().__init__('ais_simulator_node')
+
+        # 获取共享包的安装路径
+        package_share_directory = get_package_share_directory('ais_simulator')
+        default_map = os.path.join(package_share_directory, 'config', 'river.geojson')
+        default_ships = os.path.join(package_share_directory, 'config', 'ships_config.yaml')
 
         # 尝试打开指定串口
         self.declare_parameter('output_port', '/dev/pts/2') 
@@ -25,14 +31,18 @@ class AisSimulatorNode(Node):
         self.declare_parameter('ships_configs', 'ships_config.yaml')
         config_file = self.get_parameter('ships_configs').get_parameter_value().string_value
 
+        # 加载地图配置
+        self.declare_parameter('map_path', '')
+        map_path_param = self.get_parameter('map_path').get_parameter_value().string_value
+
         self.startup_ok = False
         # 地球半径 (米)
         self.EARTH_RADIUS_METERS = 6371e3
-        self.SAFETY_DISTANCE = 0.0005
+        self.SAFETY_DISTANCE = 0.001 #110m左右的安全距离
 
         try:
             #读取船舶配置
-            self.simulated_ships = self.load_ship_configs(config_file)
+            self.simulated_ships = self.load_ship_configs(default_ships)
             if not self.simulated_ships:
                 self.get_logger().error('没有加载到任何船只配置，节点将退出。')
                 rclpy.shutdown()
@@ -60,14 +70,9 @@ class AisSimulatorNode(Node):
 
         self.get_logger().info(f'AIS 模拟器已启动，模拟 {len(self.simulated_ships)} 艘船')
 
-        river_coords = [
-            (121.780, 31.380), # 左上
-            (121.850, 31.340), # 右上
-            (121.840, 31.320), # 右下
-            (121.770, 31.360), # 左下
-            (121.780, 31.380)  # 闭合
-        ]
-        self.safe_zone = Polygon(river_coords)
+        target_map = map_path_param if map_path_param else default_map
+
+        self.safe_zone = MapLoader.load_from_geojson(target_map, self.get_logger())
         self.get_logger().info('电子围栏初始化完成。')
 
     #计算两船之间距离
@@ -76,18 +81,11 @@ class AisSimulatorNode(Node):
 
     #加载模拟船的配置
     def load_ship_configs(self, filename):
-        package_name = 'ais_simulator' 
         
         try:
-            # 1. 使用 ROS 2 机制找到包的共享目录
-            share_directory = get_package_share_directory(package_name)
+            self.get_logger().info(f'正在尝试从 ROS 2 共享目录路径: {filename} 读取配置...')
             
-            # 2. 构造配置文件的完整路径
-            full_path = os.path.join(share_directory, filename)
-
-            self.get_logger().info(f'正在尝试从 ROS 2 共享目录路径: {full_path} 读取配置...')
-            
-            with open(full_path, 'r') as f:
+            with open(filename, 'r') as f:
                 config = yaml.safe_load(f)
             
             if 'simulated_ships' in config:
@@ -99,13 +97,12 @@ class AisSimulatorNode(Node):
                         self.get_logger().warn(f"船只配置 {ship} 缺少关键字段，已被跳过。")
                 return valid_ships
             else:
-                self.get_logger().error(f"配置文件 '{full_path}' 中缺少 'simulated_ships' 键。")
+                self.get_logger().error(f"配置文件 '{filename}' 中缺少 'simulated_ships' 键。")
                 return []
                 
         except Exception as e:
             # 如果文件找不到，或者 YAML 解析失败，都会被捕获
             self.get_logger().error(f"无法加载或解析船舶配置文件 '{filename}'。错误: {e}")
-            self.get_logger().error(f"请确保已修改 setup.py 将 '{filename}' 复制到 '{package_name}' 的共享目录！")
             raise # 重新抛出异常，让 __init__ 退出
     
     #定时器的主回调函数，每秒执行一次。
@@ -162,15 +159,6 @@ class AisSimulatorNode(Node):
         except Exception as e:
             self.get_logger().warn(f'编码或发送NMEA时出错: {e}')
 
-    #辅助函数：将 度/分钟 转换为AIS的ROT字段值
-    def convert_rot_to_ais(self, rot_deg_per_min):
-        if rot_deg_per_min == 0:
-            return 0
-        # 这是一个简化的转换，真实AIS ROT字段是非线性的
-        if rot_deg_per_min > 0:
-            return 126
-        else:
-            return -126
 
     #船只之间互相避让,检查当前船只与其他船只的距离，并在距离过近时修改航向
     def avoid_collision_with_other_ships(self, current_ship, all_ships):
@@ -186,74 +174,173 @@ class AisSimulatorNode(Node):
             if distance < self.SAFETY_DISTANCE:
                 self.get_logger().warn(f"{current_ship['mmsi']} 发现碰撞风险！")
                 
-                current_ship['heading'] = (current_ship['heading'] + 30.0) % 360
-                current_ship['rot'] = 5.0
+                #执行避让动作
+                if abs(current_ship['rot']) < 5.0:
+                    turn_rot = random.choice([10.0, -10.0])
+                    current_ship['rot']  = turn_rot
+                current_ship['heading'] = (current_ship['heading'] + 5.0) % 360.0
                 return
             
-            #恢复直航
-            if current_ship['rot'] != 0.0:
-                current_ship['rot'] = 0.0
+            # 如果没有风险，且船的 ROT 是碰撞避免设置的，则缓慢消除 ROT 
+            if abs(current_ship['rot']) > 5.0 and abs(current_ship['rot']) < 25.0: 
+                 current_ship['rot'] *= 0.8 # 缓慢减少 ROT
 
-    #更新位置并包含避障逻辑 + 随机扰动
     def update_ship_state(self, ship_state):
-        dt = self.timer_period  # 时间间隔 (秒)
-
-        # 模拟风浪和人为微调
-        # 1. 持续的微小漂移 (模拟水流/风): -0.5度 到 +0.5度 之间随机
-        drift = random.uniform(-0.5, 0.5)
+        # 定义常量
+        dt = self.timer_period  # 1秒
+        LOOKAHEAD_TIME = 5.0    # 预警 5秒
         
-        # 2. 偶尔的主动变向 (模拟船长调整航向): 
-        # 每秒有 5% 的概率发生稍微大一点的转向 (-2 到 2 度)
-        if random.random() < 0.05:
-            drift += random.uniform(-2.0, 2.0)
+        # ==========================================
+        # 第一步：航点导航逻辑
+        # ==========================================
+        if 'waypoints' in ship_state and len(ship_state['waypoints']) > 0:
+            target_lat, target_lon = ship_state['waypoints'][0]
+            
+            # 1. 计算距离
+            dist_to_target = self.calculate_distance(
+                ship_state['latitude'], ship_state['longitude'],
+                target_lat, target_lon
+            )
+        
+            # 2. 判断到达 (200米左右)
+            if dist_to_target < 0.002: 
+                self.get_logger().info(f"MMSI {ship_state['mmsi']} 到达航点，切换下一个！")
+                ship_state['waypoints'].pop(0)
+                if len(ship_state['waypoints']) > 0:
+                    target_lat, target_lon = ship_state['waypoints'][0] # 更新为新目标
+            
+            # 3. 实时计算目标方位角 (Target Heading)
+            if len(ship_state['waypoints']) > 0:
+                ship_state['target_heading'] = self.calculate_bearing(
+                    ship_state['latitude'], ship_state['longitude'],
+                    target_lat, target_lon
+                )
 
-        # 3. 计算新航向
+        # ==========================================
+        # 第二步：基础导航控制
+        # ==========================================
+
+        if 'target_heading' in ship_state:
+            diff = self.get_heading_diff(ship_state['target_heading'], ship_state['heading'])
+            
+            # 简单的 P 控制器：偏差越大，转得越快
+            # 限制最大转向率为 10.0 度/分钟 (模拟正常航行时的转向)
+            nav_rot = max(-10.0, min(10.0, diff * 0.5))
+            
+            # 应用导航指令 (稍后可能会被避障逻辑覆盖)
+            ship_state['rot'] = nav_rot
+
+        # ==========================================
+        # 第三步：物理状态更新预备
+        # ==========================================
+        # 1. 随机扰动 (模拟风浪)
+        drift = random.uniform(-0.5, 0.5)
+        if random.random() < 0.05: drift += random.uniform(-2.0, 2.0)
+
+        # 2. 准备计算参数
+        # 注意：这里我们使用刚才计算出的 nav_rot 来更新航向
         rot_deg_per_sec = ship_state['rot'] / 60.0
-        # 将随机漂移加到航向计算中
-        next_heading = ship_state['heading'] + rot_deg_per_sec * dt + drift
-        next_heading = next_heading % 360.0
-
-        # --- 以下是原来的位置计算逻辑 (保持不变) ---
+        next_heading = (ship_state['heading'] + rot_deg_per_sec * dt + drift) % 360.0
+        
         speed_mps = ship_state['sog'] * 0.514444
-        distance_meters = speed_mps * dt
+        dist_1s = speed_mps * dt
+        dist_5s = speed_mps * LOOKAHEAD_TIME
 
-        if distance_meters == 0:
-            return 
+        if dist_1s == 0: return 
 
+        # 转换弧度供计算
         bearing_rad = math.radians(next_heading)
-        lat1_rad = math.radians(ship_state['latitude'])
-        lon1_rad = math.radians(ship_state['longitude'])
+        lat_rad = math.radians(ship_state['latitude'])
+        lon_rad = math.radians(ship_state['longitude'])
+        ang_dist_1s = dist_1s / self.EARTH_RADIUS_METERS
+        ang_dist_5s = dist_5s / self.EARTH_RADIUS_METERS
 
-        ang_dist = distance_meters / self.EARTH_RADIUS_METERS
+        # 3. 计算未来位置
+        # 1秒后 (用于撞墙检测)
+        next_lat, next_lon = self.calculate_new_position(lat_rad, lon_rad, bearing_rad, ang_dist_1s)
+        # 5秒后 (用于预警)
+        future_lat, future_lon = self.calculate_new_position(lat_rad, lon_rad, bearing_rad, ang_dist_5s)
 
+        # ==========================================
+        # 第四步：双层避障逻辑 (安全 > 导航)
+        # ==========================================
+        warning_point = Point(future_lon, future_lat)
+        immediate_point = Point(next_lon, next_lat)
+        
+        # --- [层级 A] 预警检查 (5秒) ---
+        if not self.safe_zone.contains(warning_point):
+            # 发现 5秒后可能出界，且当前不是在做剧烈转向 (ROT < 5.0)
+            # 这意味着：如果“正常导航”会导致出界，我们就“覆盖”它
+            if abs(ship_state['rot']) < 5.0: 
+                soft_turn = random.choice([3.0, -3.0]) # 柔和避让
+                ship_state['rot'] = soft_turn 
+                self.get_logger().info(f"MMSI {ship_state['mmsi']}: 预判触岸，覆盖导航指令，执行柔和转向。")
+
+        # --- [层级 B] 立即碰撞检查 (1秒) ---
+        if self.safe_zone.contains(immediate_point):
+            # --- 安全 ---
+            # 提交位置更新
+            ship_state['latitude'] = next_lat
+            ship_state['longitude'] = next_lon
+            ship_state['heading'] = next_heading
+            
+            # 如果是因为刚才紧急避让导致 ROT 很大，现在安全了，需要快速衰减 ROT，
+            # 让控制权交还给“航点导航逻辑”
+            if abs(ship_state['rot']) > 10.0:
+                 ship_state['rot'] *= 0.8
+            
+        else:
+            # --- 危险 (撞墙) ---
+            self.get_logger().warn(f"MMSI {ship_state['mmsi']} 撞墙警告！执行紧急避让。")
+            
+            # 强制大角度转向，完全接管控制权
+            if abs(ship_state['rot']) < 10.0:
+                hard_turn = random.choice([15.0, -15.0])
+                ship_state['rot'] = hard_turn 
+            
+            # 不更新位置 (原地停一帧旋转)
+
+    #辅助函数1：将 度/分钟 转换为AIS的ROT字段值
+    def convert_rot_to_ais(self, rot_deg_per_min):
+        if rot_deg_per_min == 0:
+            return 0
+        # 这是一个简化的转换，真实AIS ROT字段是非线性的
+        if rot_deg_per_min > 0:
+            return 126
+        else:
+            return -126
+    
+    #辅助函数2：根据球面距离和航向计算新位置
+    def calculate_new_position(self, lat1_rad, lon1_rad, bearing_rad, ang_dist):
         lat2_rad = math.asin(
             math.sin(lat1_rad) * math.cos(ang_dist) +
             math.cos(lat1_rad) * math.sin(ang_dist) * math.cos(bearing_rad)
         )
-
         lon2_rad = lon1_rad + math.atan2(
             math.sin(bearing_rad) * math.sin(ang_dist) * math.cos(lat1_rad),
             math.cos(ang_dist) - math.sin(lat1_rad) * math.sin(lat2_rad)
         )
+        return math.degrees(lat2_rad), math.degrees(lon2_rad)
 
-        next_lat = math.degrees(lat2_rad)
-        next_lon = math.degrees(lon2_rad)
+    #辅助函数3：计算方位角
+    def calculate_bearing(self, lat1, lon1, lat2, lon2):
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        diff_lon_rad = math.radians(lon2 - lon1)
 
-        # --- 碰撞检测逻辑 (保持不变) ---
-        next_point = Point(next_lon, next_lat)
+        y = math.sin(diff_lon_rad) * math.cos(lat2_rad)
+        x = math.cos(lat1_rad) * math.sin(lat2_rad) - \
+            math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(diff_lon_rad)
+        
+        bearing = math.degrees(math.atan2(y, x))
+        return (bearing + 360) % 360
+    
+    # 辅助函数4：计算两个角度的最小差值
+    def get_heading_diff(self, target, current):
+        diff = (target - current + 180) % 360 - 180
+        return diff
 
-        if self.safe_zone.contains(next_point):
-            # 安全：更新位置和航向
-            ship_state['latitude'] = next_lat
-            ship_state['longitude'] = next_lon
-            ship_state['heading'] = next_heading
-        else:
-            # 撞墙：执行避障
-            self.get_logger().warn(f"MMSI {ship_state['mmsi']} 触碰边界！正在自动转向...")
-            turn_angle = random.randint(120, 240)
-            ship_state['heading'] = (ship_state['heading'] + turn_angle) % 360.0
-            ship_state['rot'] = 0
-
+        
 def main(args=None):
     rclpy.init(args=args)
     node = AisSimulatorNode() # node 总是会被创建
