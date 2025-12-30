@@ -24,7 +24,7 @@
   - _Requirements: 6.1-6.6_
 
 - [ ] 2. 实现场景生成器核心功能
-  - [ ] 2.1 创建场景配置数据模型
+  - [x] 2.1 创建场景配置数据模型
     - 实现 ScenarioConfig, ShipState, EnvironmentConfig 数据类
     - 添加数据验证逻辑
     - _Requirements: 1.1-1.4, 8.2_
