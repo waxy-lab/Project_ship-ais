@@ -125,6 +125,75 @@ scenario:
 
 ### 3. 避碰决策模块 (Collision Avoidance Module)
 
+本模块实现多种避碰算法，支持算法性能对比和优化研究。
+
+#### 算法架构
+
+**统一算法接口：**
+```python
+class CollisionAvoidanceAlgorithm(ABC):
+    """避碰算法基类"""
+    
+    @abstractmethod
+    def calculate_avoidance_action(
+        self,
+        own_ship: ShipState,
+        target_ships: List[ShipState],
+        environment: EnvironmentConfig
+    ) -> AvoidanceAction:
+        """
+        计算避让动作
+        
+        Args:
+            own_ship: 本船状态
+            target_ships: 目标船舶列表
+            environment: 环境配置
+            
+        Returns:
+            避让动作（航向调整、速度调整等）
+        """
+        pass
+    
+    @abstractmethod
+    def get_algorithm_name(self) -> str:
+        """返回算法名称"""
+        pass
+```
+
+**实现的算法：**
+
+1. **COLREGS-Based Algorithm**（主算法）
+   - 基于《国际海上避碰规则》
+   - 规则引擎 + 路径评估
+   - 符合国际标准，实用性强
+   
+2. **A* Path Planning Algorithm**（对比算法）
+   - 传统路径规划算法
+   - 基于网格搜索
+   - 用于性能基准对比
+   
+3. **Hybrid Algorithm**（优化算法）
+   - COLREGS规则 + A*路径优化
+   - 结合规则合规性和路径效率
+   - 探索算法优化方向
+
+**算法切换机制：**
+```python
+class CollisionAvoidanceNode:
+    def __init__(self):
+        # 加载配置的算法
+        algorithm_type = self.get_parameter('algorithm_type').value
+        
+        if algorithm_type == 'colregs':
+            self.algorithm = COLREGSAlgorithm()
+        elif algorithm_type == 'astar':
+            self.algorithm = AStarAlgorithm()
+        elif algorithm_type == 'hybrid':
+            self.algorithm = HybridAlgorithm()
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm_type}")
+```
+
 #### 3.1 风险评估子模块 (Risk Assessment)
 
 **职责：** 计算碰撞风险指标
@@ -243,7 +312,9 @@ def apply_colregs_rule(encounter_type: EncounterType,
 
 #### 3.3 路径规划子模块 (Path Planning)
 
-**职责：** 生成和评估避让路径
+##### 3.3.1 COLREGS-Based Path Planning（主算法）
+
+**职责：** 基于COLREGS规则生成和评估避让路径
 
 **路径生成算法：**
 ```python
@@ -279,6 +350,194 @@ def evaluate_path(path: Path,
     # 安全性评分：检查是否引发新的碰撞风险
     safety_score = calculate_safety_score(path, target_ships)
     
+    # 效率评分：航程增加和时间延误
+    efficiency_score = calculate_efficiency_score(path)
+    
+    # 合规性评分：是否符合COLREGS规则
+    compliance_score = calculate_compliance_score(path, colregs_rule)
+    
+    # 综合评分
+    total_score = (0.5 * safety_score + 
+                   0.3 * efficiency_score + 
+                   0.2 * compliance_score)
+    
+    return PathScore(total=total_score, 
+                     safety=safety_score,
+                     efficiency=efficiency_score,
+                     compliance=compliance_score)
+```
+
+##### 3.3.2 A* Path Planning Algorithm（对比算法）
+
+**职责：** 使用A*算法进行路径规划，作为性能对比基准
+
+**算法特点：**
+- 经典路径规划算法
+- 基于网格搜索
+- 考虑障碍物（其他船舶）
+- 不考虑COLREGS规则
+
+**核心实现：**
+```python
+class AStarAlgorithm(CollisionAvoidanceAlgorithm):
+    """A*路径规划算法"""
+    
+    def __init__(self, grid_resolution=0.01):
+        """
+        Args:
+            grid_resolution: 网格分辨率（度）
+        """
+        self.grid_resolution = grid_resolution
+    
+    def calculate_avoidance_action(
+        self,
+        own_ship: ShipState,
+        target_ships: List[ShipState],
+        environment: EnvironmentConfig
+    ) -> AvoidanceAction:
+        """使用A*算法计算避让路径"""
+        
+        # 1. 构建网格地图
+        grid_map = self.build_grid_map(own_ship, target_ships, environment)
+        
+        # 2. 设置起点和终点
+        start = (own_ship.latitude, own_ship.longitude)
+        goal = self.calculate_goal_position(own_ship)
+        
+        # 3. A*搜索
+        path = self.astar_search(grid_map, start, goal)
+        
+        # 4. 路径平滑
+        smoothed_path = self.smooth_path(path)
+        
+        # 5. 转换为控制指令
+        action = self.path_to_action(own_ship, smoothed_path)
+        
+        return action
+    
+    def astar_search(self, grid_map, start, goal):
+        """A*搜索算法"""
+        open_set = PriorityQueue()
+        open_set.put((0, start))
+        came_from = {}
+        g_score = {start: 0}
+        f_score = {start: self.heuristic(start, goal)}
+        
+        while not open_set.empty():
+            current = open_set.get()[1]
+            
+            if current == goal:
+                return self.reconstruct_path(came_from, current)
+            
+            for neighbor in self.get_neighbors(current, grid_map):
+                tentative_g_score = g_score[current] + self.distance(current, neighbor)
+                
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.heuristic(neighbor, goal)
+                    open_set.put((f_score[neighbor], neighbor))
+        
+        return None  # 未找到路径
+    
+    def heuristic(self, pos1, pos2):
+        """启发式函数：欧几里得距离"""
+        return math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
+    
+    def build_grid_map(self, own_ship, target_ships, environment):
+        """构建网格地图，标记障碍物"""
+        # 将其他船舶视为障碍物
+        # 考虑船舶的安全距离
+        pass
+    
+    def get_algorithm_name(self) -> str:
+        return "A* Path Planning"
+```
+
+##### 3.3.3 Hybrid Algorithm（优化算法）
+
+**职责：** 结合COLREGS规则和A*路径优化
+
+**算法特点：**
+- 首先应用COLREGS规则确定避让方向
+- 使用A*算法优化路径
+- 兼顾规则合规性和路径效率
+
+**核心实现：**
+```python
+class HybridAlgorithm(CollisionAvoidanceAlgorithm):
+    """混合算法：COLREGS + A*"""
+    
+    def __init__(self):
+        self.colregs_engine = COLREGSRulesEngine()
+        self.astar_planner = AStarAlgorithm()
+    
+    def calculate_avoidance_action(
+        self,
+        own_ship: ShipState,
+        target_ships: List[ShipState],
+        environment: EnvironmentConfig
+    ) -> AvoidanceAction:
+        """混合算法计算避让动作"""
+        
+        # 1. 使用COLREGS规则确定避让方向
+        encounter_type = self.colregs_engine.determine_encounter_type(
+            own_ship, target_ships[0]
+        )
+        colregs_action = self.colregs_engine.apply_colregs_rule(
+            encounter_type, own_ship, target_ships[0]
+        )
+        
+        # 2. 在COLREGS允许的方向上使用A*优化路径
+        constrained_goal = self.calculate_constrained_goal(
+            own_ship, colregs_action
+        )
+        
+        # 3. A*搜索最优路径
+        optimized_path = self.astar_planner.astar_search(
+            self.build_grid_map(own_ship, target_ships, environment),
+            (own_ship.latitude, own_ship.longitude),
+            constrained_goal
+        )
+        
+        # 4. 转换为控制指令
+        action = self.path_to_action(own_ship, optimized_path)
+        
+        return action
+    
+    def get_algorithm_name(self) -> str:
+        return "Hybrid (COLREGS + A*)"
+```
+
+#### 3.4 算法性能对比
+
+**对比维度：**
+
+1. **安全性指标**
+   - 避碰成功率
+   - 最小会遇距离
+   - 碰撞风险指数
+
+2. **效率指标**
+   - 航程增加百分比
+   - 时间延误
+   - 航向改变次数
+
+3. **合规性指标**
+   - COLREGS规则遵守率
+   - 规则违反次数
+
+4. **鲁棒性指标**
+   - 极端场景表现
+   - 多船场景表现
+
+**预期对比结果：**
+
+| 算法 | 安全性 | 效率 | 合规性 | 适用场景 |
+|------|--------|------|--------|----------|
+| COLREGS-Based | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 实际应用 |
+| A* | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ | 路径优化 |
+| Hybrid | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 综合优化 |
     # 效率评分：航程增加和时间延误
     efficiency_score = calculate_efficiency_score(path)
     
