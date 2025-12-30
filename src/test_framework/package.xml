@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>test_framework</name>
+  <version>0.1.0</version>
+  <description>测试评估框架 - 批量运行测试场景并统计性能指标</description>
+  <maintainer email="user@todo.todo">Maritime Collision Avoidance Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>scenario_generator</depend>
+  <depend>collision_avoidance</depend>
+
+  <test_depend>pytest</test_depend>
+  <test_depend>python3-hypothesis</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

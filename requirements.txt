@@ -1,0 +1,31 @@
+# Python依赖包列表
+# 水路仿真测试框架与智能避碰系统
+
+# 核心依赖
+pyyaml>=6.0
+numpy>=1.24.0
+shapely>=2.0.0
+
+# ROS2相关（通常通过apt安装，这里列出供参考）
+# rclpy
+# std_msgs
+
+# 测试框架
+pytest>=7.4.0
+pytest-cov>=4.1.0
+hypothesis>=6.82.0
+
+# AIS相关
+pyais>=2.6.0
+pyserial>=3.5
+
+# 数据处理
+pandas>=2.0.0
+
+# 可视化（可选）
+matplotlib>=3.7.0
+
+# 开发工具
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.4.0

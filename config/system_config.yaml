@@ -1,0 +1,70 @@
+# 系统配置文件
+# 水路仿真测试框架与智能避碰系统
+
+# 系统基本配置
+system:
+  name: "Maritime Collision Avoidance System"
+  version: "0.1.0"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# AIS模拟器配置
+ais_simulator:
+  update_frequency: 1.0  # Hz
+  output_port: "/dev/pts/2"
+  map_path: ""  # 留空使用默认地图
+  ships_config: "ships_config.yaml"
+
+# 场景生成器配置
+scenario_generator:
+  default_duration: 600.0  # 秒
+  default_weather: "calm"
+  default_visibility: "good"
+  default_water_area: "open"
+
+# 避碰决策模块配置
+collision_avoidance:
+  # 风险评估参数
+  risk_assessment:
+    safe_distance: 0.5  # 海里
+    safe_time: 300  # 秒（5分钟）
+    warning_threshold: 0.6  # CRI预警阈值
+    danger_threshold: 0.8   # CRI危险阈值
+  
+  # COLREGS规则参数
+  colregs:
+    min_turn_angle: 15.0  # 最小转向角度（度）
+    max_turn_angle: 45.0  # 最大转向角度（度）
+    give_way_turn_angle: 30.0  # 让路船转向角度
+  
+  # 路径规划参数
+  path_planning:
+    candidate_count: 5  # 候选路径数量
+    safety_weight: 0.5  # 安全性权重
+    efficiency_weight: 0.3  # 效率权重
+    compliance_weight: 0.2  # 合规性权重
+
+# 测试框架配置
+test_framework:
+  # 性能指标阈值
+  performance_thresholds:
+    min_success_rate: 0.95  # 最低避碰成功率
+    min_compliance_rate: 0.90  # 最低规则遵守率
+    max_false_alarm_rate: 0.10  # 最大误报率
+  
+  # 数据记录配置
+  data_logging:
+    enabled: true
+    output_dir: "test_results"
+    formats: ["csv", "json"]  # 支持的导出格式
+  
+  # 批量测试配置
+  batch_testing:
+    parallel_workers: 4  # 并行测试数量
+    timeout: 1200  # 单个测试超时时间（秒）
+
+# 可视化配置
+visualization:
+  enabled: true
+  update_rate: 1.0  # Hz
+  show_trajectories: true
+  show_risk_zones: true
