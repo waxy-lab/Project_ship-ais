@@ -12,12 +12,12 @@
   - 创建配置管理系统
   - _Requirements: 8.1, 8.2, 10.1_
 
-- [ ]* 1.1 编写项目结构重组脚本
+- [x] 1.1 编写项目结构重组脚本
   - 创建新的包结构：scenario_generator, collision_avoidance, test_framework
   - 迁移现有代码到新结构    
   - _Requirements: 8.1_
 
-- [ ]* 1.2 配置pytest和Hypothesis测试框架
+- [x] 1.2 配置pytest和Hypothesis测试框架
   - 安装依赖：pytest, hypothesis, pytest-ros
   - 创建测试配置文件 pytest.ini
   - 编写测试工具函数和策略生成器
@@ -29,7 +29,7 @@
     - 添加数据验证逻辑
     - _Requirements: 1.1-1.4, 8.2_
 
-  - [ ]* 2.2 编写场景配置数据模型的单元测试
+  - [ ] 2.2 编写场景配置数据模型的单元测试
     - 测试数据验证逻辑
     - 测试边界情况（无效坐标、负数速度等）
     - _Requirements: 1.1-1.4_

@@ -23,6 +23,10 @@ echo "安装Python依赖包..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# 安装额外的测试依赖
+echo "安装测试框架依赖..."
+pip install lark -q
+
 echo ""
 echo "========================================="
 echo "检查ROS2环境..."
