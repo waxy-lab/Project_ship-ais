@@ -1,0 +1,29 @@
+# 基础对遇场景
+# 两船相距10海里，中等速度相向航行
+
+scenario_type: head_on
+description: "基础对遇场景：两船相距10海里，以中等速度相向航行"
+
+parameters:
+  distance: 10.0  # 海里
+  speed1: 15.0    # 节
+  speed2: 15.0    # 节
+  base_latitude: 30.0
+  base_longitude: 120.0
+  mmsi1: 123456789
+  mmsi2: 987654321
+
+environment:
+  weather_condition: calm
+  visibility: good
+  water_area_type: open
+  wind_speed: 0.0
+  wind_direction: 0.0
+  current_speed: 0.0
+  current_direction: 0.0
+
+duration: 600.0  # 秒
+
+success_criteria:
+  min_distance: 0.5
+  collision_avoided: true

@@ -1,0 +1,29 @@
+# 能见度不良对遇场景
+# 雾天条件下的对遇
+
+scenario_type: head_on
+description: "能见度不良对遇场景：雾天条件下两船对遇，需要更早采取避让措施"
+
+parameters:
+  distance: 10.0  # 海里
+  speed1: 12.0    # 节 - 雾天减速
+  speed2: 12.0    # 节 - 雾天减速
+  base_latitude: 30.0
+  base_longitude: 120.0
+  mmsi1: 567890123
+  mmsi2: 543210987
+
+environment:
+  weather_condition: moderate
+  visibility: poor  # 能见度不良
+  water_area_type: open
+  wind_speed: 8.0
+  wind_direction: 180.0
+  current_speed: 0.8
+  current_direction: 270.0
+
+duration: 600.0  # 秒
+
+success_criteria:
+  min_distance: 1.0  # 能见度不良时要求更大的安全距离
+  collision_avoided: true

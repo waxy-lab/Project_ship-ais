@@ -1,0 +1,29 @@
+# 近距离对遇场景
+# 两船相距5海里，需要快速决策
+
+scenario_type: head_on
+description: "近距离对遇场景：两船相距5海里，需要快速做出避让决策"
+
+parameters:
+  distance: 5.0   # 海里
+  speed1: 18.0    # 节
+  speed2: 16.0    # 节
+  base_latitude: 29.0
+  base_longitude: 119.0
+  mmsi1: 345678901
+  mmsi2: 765432109
+
+environment:
+  weather_condition: calm
+  visibility: moderate
+  water_area_type: open
+  wind_speed: 3.0
+  wind_direction: 45.0
+  current_speed: 0.3
+  current_direction: 90.0
+
+duration: 600.0  # 秒
+
+success_criteria:
+  min_distance: 0.5
+  collision_avoided: true

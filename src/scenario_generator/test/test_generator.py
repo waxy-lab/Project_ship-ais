@@ -6,12 +6,15 @@
 
 import pytest
 import math
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from scenario_generator import (
     ScenarioGenerator,
     HeadOnParams,
     ScenarioType,
     EnvironmentConfig,
 )
+from test_framework.strategies import head_on_params_strategy
 
 
 class TestHeadOnScenarioGenerator:
@@ -446,3 +449,261 @@ class TestScenarioGeneratorEdgeCases:
         # 验证船舶位置有效（可能跨越180度）
         assert -180 <= ship1.longitude <= 180
         assert -180 <= ship2.longitude <= 180
+
+
+
+# ============================================================================
+# 基于属性的测试 (Property-Based Tests)
+# ============================================================================
+
+class TestHeadOnScenarioProperties:
+    """
+    对遇场景生成的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证场景生成的通用正确性
+    """
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        base_latitude=st.floats(min_value=20.0, max_value=50.0, allow_nan=False, allow_infinity=False),
+        base_longitude=st.floats(min_value=100.0, max_value=140.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_head_on_geometry(self, distance, speed1, speed2, base_latitude, base_longitude):
+        """
+        **Property 1: 场景生成的几何正确性**
+        **Validates: Requirements 1.1**
+        
+        Feature: maritime-collision-avoidance, Property 1: 场景生成的几何正确性
+        
+        对于任何对遇场景参数，生成的两艘船舶应满足对遇的几何条件：
+        1. 航向差在170-190度之间
+        2. 相对方位在-10到10度之间
+        
+        这个属性测试使用 Hypothesis 生成随机参数，验证所有情况下几何条件都成立。
+        """
+        # 创建场景生成器
+        generator = ScenarioGenerator()
+        
+        # 创建参数
+        params = HeadOnParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            base_latitude=base_latitude,
+            base_longitude=base_longitude
+        )
+        
+        # 生成场景
+        scenario = generator.generate_head_on_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.HEAD_ON, \
+            "场景类型应为 HEAD_ON"
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2, \
+            "对遇场景应包含2艘船舶"
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # ========================================
+        # 属性1：航向差在170-190度之间
+        # ========================================
+        heading_diff = abs(ship1.heading - ship2.heading)
+        # 处理跨越0度的情况
+        if heading_diff > 180:
+            heading_diff = 360 - heading_diff
+        
+        assert 170 <= heading_diff <= 190, \
+            f"航向差应在170-190度之间，实际为 {heading_diff:.2f} 度 " \
+            f"(ship1: {ship1.heading:.2f}°, ship2: {ship2.heading:.2f}°)"
+        
+        # ========================================
+        # 属性2：相对方位在-10到10度之间
+        # ========================================
+        # 计算从船1看船2的方位
+        lon_diff = ship2.longitude - ship1.longitude
+        lat_diff = ship2.latitude - ship1.latitude
+        
+        # 计算方位角（从北顺时针，使用 atan2）
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        # 计算相对方位（方位角 - 航向）
+        relative_bearing = bearing - ship1.heading
+        
+        # 归一化到 -180 到 180 度范围
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        assert -10 <= relative_bearing <= 10, \
+            f"相对方位应在-10到10度之间，实际为 {relative_bearing:.2f} 度 " \
+            f"(bearing: {bearing:.2f}°, ship1 heading: {ship1.heading:.2f}°)"
+        
+        # ========================================
+        # 额外验证：船舶速度正确
+        # ========================================
+        assert ship1.sog == pytest.approx(speed1, rel=1e-6), \
+            f"船1速度应为 {speed1} 节"
+        assert ship2.sog == pytest.approx(speed2, rel=1e-6), \
+            f"船2速度应为 {speed2} 节"
+        
+        # ========================================
+        # 额外验证：船舶距离正确
+        # ========================================
+        # 计算实际距离（简化为经度差，因为纬度相同）
+        actual_lon_diff = abs(ship1.longitude - ship2.longitude)
+        expected_lon_diff = distance * (1.0 / 60.0)  # 海里转度
+        
+        assert abs(actual_lon_diff - expected_lon_diff) < 0.001, \
+            f"船舶距离应为 {distance} 海里，实际经度差为 {actual_lon_diff:.6f} 度"
+    
+    @given(head_on_params_strategy())
+    @settings(max_examples=100, deadline=None)
+    def test_property_head_on_geometry_with_strategy(self, params):
+        """
+        **Property 1: 场景生成的几何正确性（使用策略）**
+        **Validates: Requirements 1.1**
+        
+        Feature: maritime-collision-avoidance, Property 1: 场景生成的几何正确性
+        
+        使用预定义的 Hypothesis 策略生成参数，验证几何正确性。
+        这是对上面测试的补充，使用了更高级的策略组合。
+        """
+        generator = ScenarioGenerator()
+        
+        # 从策略字典创建参数对象
+        head_on_params = HeadOnParams(
+            distance=params['distance'],
+            speed1=params['speed1'],
+            speed2=params['speed2'],
+            base_latitude=params['base_lat'],
+            base_longitude=params['base_lon']
+        )
+        
+        # 生成场景
+        scenario = generator.generate_head_on_scenario(head_on_params)
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证航向差
+        heading_diff = abs(ship1.heading - ship2.heading)
+        if heading_diff > 180:
+            heading_diff = 360 - heading_diff
+        
+        assert 170 <= heading_diff <= 190, \
+            f"航向差应在170-190度之间，实际为 {heading_diff:.2f} 度"
+        
+        # 验证相对方位
+        lon_diff = ship2.longitude - ship1.longitude
+        lat_diff = ship2.latitude - ship1.latitude
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        relative_bearing = bearing - ship1.heading
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        assert -10 <= relative_bearing <= 10, \
+            f"相对方位应在-10到10度之间，实际为 {relative_bearing:.2f} 度"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_head_on_ships_on_collision_course(self, distance, speed1, speed2):
+        """
+        **Property 1 扩展：对遇场景的碰撞航线**
+        **Validates: Requirements 1.1**
+        
+        Feature: maritime-collision-avoidance, Property 1: 场景生成的几何正确性
+        
+        验证生成的对遇场景中，两艘船舶确实在碰撞航线上（如果不改变航向）。
+        这通过验证两船的航迹会在某个点相交来实现。
+        """
+        generator = ScenarioGenerator()
+        
+        params = HeadOnParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2
+        )
+        
+        scenario = generator.generate_head_on_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证两船在同一纬度（对于东西向对遇）
+        lat_diff = abs(ship1.latitude - ship2.latitude)
+        assert lat_diff < 0.001, \
+            f"对遇场景中两船应在同一纬度，纬度差为 {lat_diff:.6f}"
+        
+        # 验证两船相向航行（一个向东，一个向西）
+        # 船1航向应为90度（向东），船2航向应为270度（向西）
+        assert ship1.heading == pytest.approx(90.0, abs=0.1), \
+            f"船1应向东航行（90度），实际航向 {ship1.heading:.2f} 度"
+        assert ship2.heading == pytest.approx(270.0, abs=0.1), \
+            f"船2应向西航行（270度），实际航向 {ship2.heading:.2f} 度"
+        
+        # 验证船1在船2的西侧
+        assert ship1.longitude < ship2.longitude, \
+            "船1应在船2的西侧"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_head_on_scenario_consistency(self, distance, speed1, speed2):
+        """
+        **Property 1 扩展：场景生成的一致性**
+        **Validates: Requirements 1.1**
+        
+        Feature: maritime-collision-avoidance, Property 1: 场景生成的几何正确性
+        
+        验证使用相同参数多次生成场景时，结果应该一致（除了随机的场景ID）。
+        """
+        generator = ScenarioGenerator()
+        
+        params = HeadOnParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            mmsi1=123456789,
+            mmsi2=987654321
+        )
+        
+        # 生成两次场景
+        scenario1 = generator.generate_head_on_scenario(params)
+        scenario2 = generator.generate_head_on_scenario(params)
+        
+        # 验证船舶状态一致（除了场景ID）
+        ship1_a, ship2_a = scenario1.ships[0], scenario1.ships[1]
+        ship1_b, ship2_b = scenario2.ships[0], scenario2.ships[1]
+        
+        # 船1状态应该一致
+        assert ship1_a.mmsi == ship1_b.mmsi
+        assert ship1_a.latitude == pytest.approx(ship1_b.latitude, abs=1e-9)
+        assert ship1_a.longitude == pytest.approx(ship1_b.longitude, abs=1e-9)
+        assert ship1_a.heading == pytest.approx(ship1_b.heading, abs=1e-9)
+        assert ship1_a.sog == pytest.approx(ship1_b.sog, abs=1e-9)
+        
+        # 船2状态应该一致
+        assert ship2_a.mmsi == ship2_b.mmsi
+        assert ship2_a.latitude == pytest.approx(ship2_b.latitude, abs=1e-9)
+        assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
+        assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
+        assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)

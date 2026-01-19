@@ -39,7 +39,7 @@
     - 计算两船初始位置和航向
     - _Requirements: 1.1_
 
-  - [ ]* 2.4 编写对遇场景生成的属性测试
+  - [x] 2.4 编写对遇场景生成的属性测试
     - **Property 1: 场景生成的几何正确性**
     - **Validates: Requirements 1.1**
     - 使用Hypothesis生成随机参数，验证几何条件
