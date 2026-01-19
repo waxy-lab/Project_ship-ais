@@ -34,7 +34,7 @@
     - 测试边界情况（无效坐标、负数速度等）
     - _Requirements: 1.1-1.4_
 
-  - [ ] 2.3 实现对遇场景生成器
+  - [x] 2.3 实现对遇场景生成器
     - 实现 generate_head_on_scenario() 方法
     - 计算两船初始位置和航向
     - _Requirements: 1.1_
