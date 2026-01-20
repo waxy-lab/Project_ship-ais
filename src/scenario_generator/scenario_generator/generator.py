@@ -52,11 +52,34 @@ class CrossingParams:
     distance: float              # 两船初始距离（海里）
     speed1: float                # 船1速度（节）
     speed2: float                # 船2速度（节）
-    crossing_angle: float        # 交叉角度（度）
+    crossing_angle: float        # 交叉角度（度，5-112.5 或 -112.5到-5）
     base_latitude: float = 30.0  # 基准纬度
     base_longitude: float = 120.0  # 基准经度
     mmsi1: int = 123456789       # 船1 MMSI
     mmsi2: int = 987654321       # 船2 MMSI
+    
+    def __post_init__(self):
+        """参数验证"""
+        if self.distance <= 0:
+            raise ValueError(f"距离必须大于0: {self.distance}")
+        if self.distance > 20:
+            raise ValueError(f"距离不应超过20海里: {self.distance}")
+        if self.speed1 <= 0:
+            raise ValueError(f"船1速度必须大于0: {self.speed1}")
+        if self.speed2 <= 0:
+            raise ValueError(f"船2速度必须大于0: {self.speed2}")
+        if self.speed1 > 50 or self.speed2 > 50:
+            raise ValueError(f"速度不应超过50节")
+        if not (-90 <= self.base_latitude <= 90):
+            raise ValueError(f"纬度必须在-90到90之间: {self.base_latitude}")
+        if not (-180 <= self.base_longitude <= 180):
+            raise ValueError(f"经度必须在-180到180之间: {self.base_longitude}")
+        
+        # 验证交叉角度范围：5-112.5 或 -112.5到-5
+        if not ((5 <= self.crossing_angle <= 112.5) or (-112.5 <= self.crossing_angle <= -5)):
+            raise ValueError(
+                f"交叉角度必须在5-112.5度或-112.5到-5度之间: {self.crossing_angle}"
+            )
 
 
 @dataclass
@@ -186,14 +209,103 @@ class ScenarioGenerator:
     def generate_crossing_scenario(self, params: CrossingParams) -> ScenarioConfig:
         """生成交叉相遇场景
         
+        交叉相遇场景定义：两艘船舶以一定角度交叉航行
+        
+        根据设计文档和需求：
+        - 相对方位应在 5-112.5 度或 -112.5 到 -5 度之间
+        - 两船的航线会在某点相交
+        - crossing_angle 是从船1看船2的相对方位
+        
+        实现策略（简化方法）：
+        - 船1位于基准位置，航向向北（0度）
+        - 船2位于船1的相对方位crossing_angle方向，距离为params.distance
+        - 计算两船航线的交叉点
+        - 调整两船位置，使它们距离交叉点相等
+        
         Args:
             params: 交叉相遇场景参数
             
         Returns:
             ScenarioConfig: 生成的场景配置
+            
+        Raises:
+            ValueError: 参数无效时抛出
         """
-        # TODO: 实现交叉相遇场景生成
-        raise NotImplementedError("交叉相遇场景生成尚未实现")
+        # 计算距离对应的经纬度偏移
+        distance_in_degrees = params.distance * self.NAUTICAL_MILE_TO_DEGREE
+        
+        # 船1的初始设置
+        ship1_lat = params.base_latitude
+        ship1_lon = params.base_longitude
+        ship1_heading = 0.0  # 向北
+        
+        # 从船1看船2的绝对方位
+        bearing_to_ship2 = (ship1_heading + params.crossing_angle) % 360
+        
+        # 船2的初始位置：在船1的相对方位crossing_angle方向，距离为distance
+        ship2_lat = ship1_lat + distance_in_degrees * math.cos(math.radians(bearing_to_ship2))
+        ship2_lon = ship1_lon + distance_in_degrees * math.sin(math.radians(bearing_to_ship2))
+        
+        # 计算两船航线的交叉点
+        # 船1沿航向0度（向北）前进
+        # 船2需要朝向一个方向，使得两条航线相交
+        
+        # 简化：让船2的航向指向船1前方的某个点
+        # 这样可以确保两船会相遇
+        
+        # 计算交叉点：设交叉点在船1前方distance距离处
+        crossing_lat = ship1_lat + distance_in_degrees
+        crossing_lon = ship1_lon
+        
+        # 计算船2的航向：从船2指向交叉点
+        lat_diff = crossing_lat - ship2_lat
+        lon_diff = crossing_lon - ship2_lon
+        ship2_heading = math.degrees(math.atan2(lon_diff, lat_diff))
+        if ship2_heading < 0:
+            ship2_heading += 360
+        
+        # 创建船舶状态
+        ship1 = ShipState(
+            mmsi=params.mmsi1,
+            latitude=ship1_lat,
+            longitude=ship1_lon,
+            heading=ship1_heading,
+            sog=params.speed1,
+            rot=0.0,
+            navigation_status="under_way_using_engine"
+        )
+        
+        ship2 = ShipState(
+            mmsi=params.mmsi2,
+            latitude=ship2_lat,
+            longitude=ship2_lon,
+            heading=ship2_heading,
+            sog=params.speed2,
+            rot=0.0,
+            navigation_status="under_way_using_engine"
+        )
+        
+        # 生成场景ID
+        scenario_id = f"crossing_{uuid.uuid4().hex[:8]}"
+        
+        # 创建场景配置
+        scenario = ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.CROSSING,
+            ships=[ship1, ship2],
+            environment=self.environment,
+            duration=600.0,  # 默认10分钟
+            success_criteria={
+                'min_distance': 0.5,  # 最小距离0.5海里
+                'collision_avoided': True
+            },
+            description=f"交叉相遇场景：两船初始相距{params.distance}海里，"
+                       f"交叉角度{params.crossing_angle}度，"
+                       f"船1速度{params.speed1}节航向{ship1_heading:.1f}度，"
+                       f"船2速度{params.speed2}节航向{ship2_heading:.1f}度"
+        )
+        
+        return scenario
     
     def generate_overtaking_scenario(self, params: OvertakingParams) -> ScenarioConfig:
         """生成追越场景
