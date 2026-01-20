@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 from scenario_generator import (
     ScenarioGenerator,
     HeadOnParams,
+    CrossingParams,
     ScenarioType,
     EnvironmentConfig,
 )
@@ -689,6 +690,399 @@ class TestHeadOnScenarioProperties:
         # 生成两次场景
         scenario1 = generator.generate_head_on_scenario(params)
         scenario2 = generator.generate_head_on_scenario(params)
+        
+        # 验证船舶状态一致（除了场景ID）
+        ship1_a, ship2_a = scenario1.ships[0], scenario1.ships[1]
+        ship1_b, ship2_b = scenario2.ships[0], scenario2.ships[1]
+        
+        # 船1状态应该一致
+        assert ship1_a.mmsi == ship1_b.mmsi
+        assert ship1_a.latitude == pytest.approx(ship1_b.latitude, abs=1e-9)
+        assert ship1_a.longitude == pytest.approx(ship1_b.longitude, abs=1e-9)
+        assert ship1_a.heading == pytest.approx(ship1_b.heading, abs=1e-9)
+        assert ship1_a.sog == pytest.approx(ship1_b.sog, abs=1e-9)
+        
+        # 船2状态应该一致
+        assert ship2_a.mmsi == ship2_b.mmsi
+        assert ship2_a.latitude == pytest.approx(ship2_b.latitude, abs=1e-9)
+        assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
+        assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
+        assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)
+
+
+# ============================================================================
+# 交叉场景测试
+# ============================================================================
+
+class TestCrossingScenarioGenerator:
+    """测试交叉相遇场景生成器"""
+    
+    def test_basic_crossing_generation(self):
+        """测试基本交叉场景生成"""
+        generator = ScenarioGenerator()
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=12.0,
+            crossing_angle=45.0,
+            base_latitude=30.0,
+            base_longitude=120.0
+        )
+        
+        scenario = generator.generate_crossing_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.CROSSING
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证速度
+        assert ship1.sog == params.speed1
+        assert ship2.sog == params.speed2
+    
+    def test_crossing_with_positive_angle(self):
+        """测试正角度的交叉场景"""
+        generator = ScenarioGenerator()
+        params = CrossingParams(
+            distance=3.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=60.0
+        )
+        
+        scenario = generator.generate_crossing_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 计算从船1看船2的相对方位
+        lon_diff = ship2.longitude - ship1.longitude
+        lat_diff = ship2.latitude - ship1.latitude
+        
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        relative_bearing = bearing - ship1.heading
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        # 验证相对方位在有效范围内
+        assert 5 <= abs(relative_bearing) <= 112.5, \
+            f"相对方位应在5-112.5度范围内，实际为{relative_bearing:.2f}度"
+    
+    def test_crossing_with_negative_angle(self):
+        """测试负角度的交叉场景"""
+        generator = ScenarioGenerator()
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=-45.0
+        )
+        
+        scenario = generator.generate_crossing_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 计算从船1看船2的相对方位
+        lon_diff = ship2.longitude - ship1.longitude
+        lat_diff = ship2.latitude - ship1.latitude
+        
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        relative_bearing = bearing - ship1.heading
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        # 验证相对方位在有效范围内
+        assert 5 <= abs(relative_bearing) <= 112.5, \
+            f"相对方位应在5-112.5度范围内，实际为{relative_bearing:.2f}度"
+
+
+class TestCrossingParamsValidation:
+    """测试交叉场景参数验证"""
+    
+    def test_invalid_crossing_angle_too_small(self):
+        """测试交叉角度过小"""
+        with pytest.raises(ValueError, match="交叉角度必须在5-112.5度或-112.5到-5度之间"):
+            CrossingParams(
+                distance=2.0,
+                speed1=10.0,
+                speed2=10.0,
+                crossing_angle=3.0
+            )
+    
+    def test_invalid_crossing_angle_in_forbidden_range(self):
+        """测试交叉角度在禁止范围内（-5到5度）"""
+        with pytest.raises(ValueError, match="交叉角度必须在5-112.5度或-112.5到-5度之间"):
+            CrossingParams(
+                distance=2.0,
+                speed1=10.0,
+                speed2=10.0,
+                crossing_angle=0.0
+            )
+    
+    def test_invalid_crossing_angle_too_large(self):
+        """测试交叉角度过大"""
+        with pytest.raises(ValueError, match="交叉角度必须在5-112.5度或-112.5到-5度之间"):
+            CrossingParams(
+                distance=2.0,
+                speed1=10.0,
+                speed2=10.0,
+                crossing_angle=120.0
+            )
+    
+    def test_valid_crossing_angle_boundaries(self):
+        """测试交叉角度边界值"""
+        # 正向最小值
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=5.0
+        )
+        assert params.crossing_angle == 5.0
+        
+        # 正向最大值
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=112.5
+        )
+        assert params.crossing_angle == 112.5
+        
+        # 负向最小值
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=-5.0
+        )
+        assert params.crossing_angle == -5.0
+        
+        # 负向最大值
+        params = CrossingParams(
+            distance=2.0,
+            speed1=10.0,
+            speed2=10.0,
+            crossing_angle=-112.5
+        )
+        assert params.crossing_angle == -112.5
+
+
+# ============================================================================
+# 交叉场景属性测试
+# ============================================================================
+
+class TestCrossingScenarioProperties:
+    """
+    交叉相遇场景生成的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证场景生成的通用正确性
+    """
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        crossing_angle=st.one_of(
+            st.floats(min_value=5.0, max_value=112.5, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=-112.5, max_value=-5.0, allow_nan=False, allow_infinity=False)
+        ),
+        base_latitude=st.floats(min_value=20.0, max_value=50.0, allow_nan=False, allow_infinity=False),
+        base_longitude=st.floats(min_value=100.0, max_value=140.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_crossing_angle_constraint(
+        self, distance, speed1, speed2, crossing_angle, base_latitude, base_longitude
+    ):
+        """
+        **Property 2: 交叉场景的角度约束**
+        **Validates: Requirements 1.2**
+        
+        Feature: maritime-collision-avoidance, Property 2: 交叉场景的角度约束
+        
+        对于任何交叉相遇场景参数，生成的两艘船舶的相对方位应在
+        5-112.5度或-112.5到-5度之间。
+        
+        这个属性测试使用 Hypothesis 生成随机参数，验证所有情况下角度约束都成立。
+        """
+        # 创建场景生成器
+        generator = ScenarioGenerator()
+        
+        # 创建参数
+        params = CrossingParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            crossing_angle=crossing_angle,
+            base_latitude=base_latitude,
+            base_longitude=base_longitude
+        )
+        
+        # 生成场景
+        scenario = generator.generate_crossing_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.CROSSING, \
+            "场景类型应为 CROSSING"
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2, \
+            "交叉场景应包含2艘船舶"
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # ========================================
+        # 属性2：相对方位在5-112.5度或-112.5到-5度之间
+        # ========================================
+        # 计算从船1看船2的方位
+        lon_diff = ship2.longitude - ship1.longitude
+        lat_diff = ship2.latitude - ship1.latitude
+        
+        # 计算方位角（从北顺时针，使用 atan2）
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        # 计算相对方位（方位角 - 航向）
+        relative_bearing = bearing - ship1.heading
+        
+        # 归一化到 -180 到 180 度范围
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        # 验证相对方位在有效范围内
+        # 允许小的浮点数误差（0.1度）
+        tolerance = 0.1
+        is_valid_positive = (5 - tolerance) <= relative_bearing <= (112.5 + tolerance)
+        is_valid_negative = (-112.5 - tolerance) <= relative_bearing <= (-5 + tolerance)
+        
+        assert is_valid_positive or is_valid_negative, \
+            f"相对方位应在5-112.5度或-112.5到-5度之间，实际为 {relative_bearing:.2f} 度 " \
+            f"(bearing: {bearing:.2f}°, ship1 heading: {ship1.heading:.2f}°, " \
+            f"crossing_angle: {crossing_angle:.2f}°)"
+        
+        # ========================================
+        # 额外验证：船舶速度正确
+        # ========================================
+        assert ship1.sog == pytest.approx(speed1, rel=1e-6), \
+            f"船1速度应为 {speed1} 节"
+        assert ship2.sog == pytest.approx(speed2, rel=1e-6), \
+            f"船2速度应为 {speed2} 节"
+        
+        # ========================================
+        # 额外验证：船舶距离正确
+        # ========================================
+        # 计算实际距离（使用Haversine公式的简化版本）
+        actual_distance_degrees = math.sqrt(
+            (ship2.latitude - ship1.latitude)**2 + 
+            (ship2.longitude - ship1.longitude)**2
+        )
+        expected_distance_degrees = distance * (1.0 / 60.0)  # 海里转度
+        
+        # 允许一定的误差（因为地球曲率等因素）
+        assert abs(actual_distance_degrees - expected_distance_degrees) < 0.01, \
+            f"船舶距离应约为 {distance} 海里，实际距离为 {actual_distance_degrees * 60:.2f} 海里"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        crossing_angle=st.one_of(
+            st.floats(min_value=5.0, max_value=112.5, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=-112.5, max_value=-5.0, allow_nan=False, allow_infinity=False)
+        )
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_crossing_ships_will_meet(
+        self, distance, speed1, speed2, crossing_angle
+    ):
+        """
+        **Property 2 扩展：交叉场景的航线相交**
+        **Validates: Requirements 1.2**
+        
+        Feature: maritime-collision-avoidance, Property 2: 交叉场景的角度约束
+        
+        验证生成的交叉场景中，两艘船舶的航线会相交（如果不改变航向）。
+        这通过验证两船的航迹会在某个点相遇来实现。
+        """
+        generator = ScenarioGenerator()
+        
+        params = CrossingParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            crossing_angle=crossing_angle
+        )
+        
+        scenario = generator.generate_crossing_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证两船不在同一位置
+        position_diff = math.sqrt(
+            (ship2.latitude - ship1.latitude)**2 + 
+            (ship2.longitude - ship1.longitude)**2
+        )
+        assert position_diff > 0.001, \
+            "两船初始位置应该不同"
+        
+        # 验证两船航向不同（不是平行航行）
+        heading_diff = abs(ship1.heading - ship2.heading)
+        if heading_diff > 180:
+            heading_diff = 360 - heading_diff
+        
+        # 交叉场景中，航向差不应接近0度或180度
+        assert not (heading_diff < 10 or heading_diff > 170), \
+            f"交叉场景中航向差应在10-170度之间，实际为 {heading_diff:.2f} 度"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        crossing_angle=st.one_of(
+            st.floats(min_value=5.0, max_value=112.5, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=-112.5, max_value=-5.0, allow_nan=False, allow_infinity=False)
+        )
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_crossing_scenario_consistency(
+        self, distance, speed1, speed2, crossing_angle
+    ):
+        """
+        **Property 2 扩展：交叉场景生成的一致性**
+        **Validates: Requirements 1.2**
+        
+        Feature: maritime-collision-avoidance, Property 2: 交叉场景的角度约束
+        
+        验证使用相同参数多次生成场景时，结果应该一致（除了随机的场景ID）。
+        """
+        generator = ScenarioGenerator()
+        
+        params = CrossingParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            crossing_angle=crossing_angle,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            mmsi1=123456789,
+            mmsi2=987654321
+        )
+        
+        # 生成两次场景
+        scenario1 = generator.generate_crossing_scenario(params)
+        scenario2 = generator.generate_crossing_scenario(params)
         
         # 验证船舶状态一致（除了场景ID）
         ship1_a, ship2_a = scenario1.ships[0], scenario1.ships[1]

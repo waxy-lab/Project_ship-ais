@@ -40,7 +40,7 @@
     - 计算交叉角度和初始位置，确保相对方位在5-112.5度范围
     - _Requirements: 1.2_
 
-  - [ ]* 3.2 编写交叉场景生成的属性测试
+  - [x] 3.2 编写交叉场景生成的属性测试
     - **Property 2: 交叉场景的角度约束**
     - **Validates: Requirements 1.2**
     - _Requirements: 1.2_
