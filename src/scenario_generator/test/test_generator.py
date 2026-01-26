@@ -2019,3 +2019,489 @@ class TestMultiShipScenarioEdgeCases:
         # 验证所有船舶位置有效
         for ship in scenario.ships:
             assert -180 <= ship.longitude <= 180
+
+
+
+# ============================================================================
+# 紧急场景测试
+# ============================================================================
+
+class TestEmergencyScenarioGenerator:
+    """测试紧急避让场景生成器"""
+    
+    def test_basic_emergency_generation(self):
+        """测试基本紧急场景生成"""
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        params = EmergencyParams(
+            dcpa=0.3,  # 0.3海里
+            tcpa=3.0,  # 3分钟
+            speed1=15.0,
+            speed2=15.0,
+            base_latitude=30.0,
+            base_longitude=120.0
+        )
+        
+        scenario = generator.generate_emergency_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.EMERGENCY
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证速度
+        assert ship1.sog == params.speed1
+        assert ship2.sog == params.speed2
+        
+        # 验证成功标准中包含DCPA和TCPA信息
+        assert 'target_dcpa' in scenario.success_criteria
+        assert 'target_tcpa' in scenario.success_criteria
+        assert 'actual_dcpa' in scenario.success_criteria
+        assert 'actual_tcpa' in scenario.success_criteria
+    
+    def test_emergency_dcpa_tcpa_values(self):
+        """测试紧急场景的DCPA和TCPA值"""
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        params = EmergencyParams(
+            dcpa=0.4,
+            tcpa=4.0,
+            speed1=12.0,
+            speed2=12.0
+        )
+        
+        scenario = generator.generate_emergency_scenario(params)
+        
+        # 获取实际计算的DCPA和TCPA
+        actual_dcpa = scenario.success_criteria['actual_dcpa']
+        actual_tcpa = scenario.success_criteria['actual_tcpa']
+        
+        # 验证实际值接近目标值（允许一定误差）
+        assert abs(actual_dcpa - params.dcpa) < 0.1, \
+            f"实际DCPA({actual_dcpa:.2f})应接近目标DCPA({params.dcpa:.2f})"
+        assert abs(actual_tcpa - params.tcpa) < 1.0, \
+            f"实际TCPA({actual_tcpa:.2f})应接近目标TCPA({params.tcpa:.2f})"
+    
+    def test_emergency_with_different_speeds(self):
+        """测试不同速度的紧急场景"""
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        params = EmergencyParams(
+            dcpa=0.2,
+            tcpa=2.0,
+            speed1=10.0,
+            speed2=20.0
+        )
+        
+        scenario = generator.generate_emergency_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        assert ship1.sog == 10.0
+        assert ship2.sog == 20.0
+    
+    def test_emergency_scenario_metadata(self):
+        """测试紧急场景的元数据"""
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        params = EmergencyParams(dcpa=0.3, tcpa=3.0)
+        
+        scenario = generator.generate_emergency_scenario(params)
+        
+        # 验证场景ID存在且非空
+        assert scenario.scenario_id
+        assert scenario.scenario_id.startswith("emergency_")
+        
+        # 验证场景描述
+        assert scenario.description
+        assert "紧急避让场景" in scenario.description
+        
+        # 验证成功标准
+        assert 'min_distance' in scenario.success_criteria
+        assert 'collision_avoided' in scenario.success_criteria
+
+
+class TestEmergencyParamsValidation:
+    """测试紧急场景参数验证"""
+    
+    def test_invalid_dcpa_negative(self):
+        """测试DCPA为负数"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="DCPA必须非负"):
+            EmergencyParams(dcpa=-0.1, tcpa=3.0)
+    
+    def test_invalid_dcpa_too_large(self):
+        """测试DCPA过大"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="DCPA不应超过2海里"):
+            EmergencyParams(dcpa=2.5, tcpa=3.0)
+    
+    def test_invalid_tcpa_negative(self):
+        """测试TCPA为负数"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="TCPA必须非负"):
+            EmergencyParams(dcpa=0.3, tcpa=-1.0)
+    
+    def test_invalid_tcpa_too_large(self):
+        """测试TCPA过大"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="TCPA不应超过30分钟"):
+            EmergencyParams(dcpa=0.3, tcpa=35.0)
+    
+    def test_invalid_speed1_zero(self):
+        """测试船1速度为0"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="船1速度必须大于0"):
+            EmergencyParams(dcpa=0.3, tcpa=3.0, speed1=0.0)
+    
+    def test_invalid_speed1_negative(self):
+        """测试船1速度为负数"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="船1速度必须大于0"):
+            EmergencyParams(dcpa=0.3, tcpa=3.0, speed1=-5.0)
+    
+    def test_invalid_speed2_zero(self):
+        """测试船2速度为0"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="船2速度必须大于0"):
+            EmergencyParams(dcpa=0.3, tcpa=3.0, speed2=0.0)
+    
+    def test_invalid_speed_too_high(self):
+        """测试速度过大"""
+        from scenario_generator import EmergencyParams
+        
+        with pytest.raises(ValueError, match="速度不应超过50节"):
+            EmergencyParams(dcpa=0.3, tcpa=3.0, speed1=51.0)
+    
+    def test_valid_boundary_values(self):
+        """测试边界值"""
+        from scenario_generator import EmergencyParams
+        
+        # 最小DCPA
+        params = EmergencyParams(dcpa=0.0, tcpa=3.0)
+        assert params.dcpa == 0.0
+        
+        # 最大DCPA
+        params = EmergencyParams(dcpa=2.0, tcpa=3.0)
+        assert params.dcpa == 2.0
+        
+        # 最小TCPA
+        params = EmergencyParams(dcpa=0.3, tcpa=0.0)
+        assert params.tcpa == 0.0
+        
+        # 最大TCPA
+        params = EmergencyParams(dcpa=0.3, tcpa=30.0)
+        assert params.tcpa == 30.0
+        
+        # 最大速度
+        params = EmergencyParams(dcpa=0.3, tcpa=3.0, speed1=50.0, speed2=50.0)
+        assert params.speed1 == 50.0
+        assert params.speed2 == 50.0
+
+
+# ============================================================================
+# 紧急场景属性测试
+# ============================================================================
+
+class TestEmergencyScenarioProperties:
+    """
+    紧急避让场景生成的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证场景生成的通用正确性
+    """
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=0.5, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=5.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=8.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=8.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        base_latitude=st.floats(min_value=20.0, max_value=50.0, allow_nan=False, allow_infinity=False),
+        base_longitude=st.floats(min_value=100.0, max_value=140.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_emergency_risk_parameters(
+        self, dcpa, tcpa, speed1, speed2, base_latitude, base_longitude
+    ):
+        """
+        **Property 5: 危险场景的风险参数**
+        **Validates: Requirements 2.1**
+        
+        Feature: maritime-collision-avoidance, Property 5: 危险场景的风险参数
+        
+        对于任何紧急避让场景配置，生成的初始状态计算出的DCPA应小于0.5海里，
+        TCPA应小于5分钟。
+        
+        这个属性测试使用 Hypothesis 生成随机参数，验证所有情况下风险参数都满足
+        紧急场景的要求。
+        """
+        from scenario_generator import EmergencyParams
+        
+        # 创建场景生成器
+        generator = ScenarioGenerator()
+        
+        # 创建参数
+        params = EmergencyParams(
+            dcpa=dcpa,
+            tcpa=tcpa,
+            speed1=speed1,
+            speed2=speed2,
+            base_latitude=base_latitude,
+            base_longitude=base_longitude
+        )
+        
+        # 生成场景
+        scenario = generator.generate_emergency_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.EMERGENCY, \
+            "场景类型应为 EMERGENCY"
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2, \
+            "紧急场景应包含2艘船舶"
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # ========================================
+        # 属性5.1：验证实际计算的DCPA小于0.5海里
+        # ========================================
+        # 从成功标准中获取实际计算的DCPA和TCPA
+        actual_dcpa = scenario.success_criteria['actual_dcpa']
+        actual_tcpa = scenario.success_criteria['actual_tcpa']
+        
+        # 验证DCPA小于0.5海里（允许小的计算误差）
+        tolerance_dcpa = 0.05  # 允许0.05海里的误差
+        assert actual_dcpa < (0.5 + tolerance_dcpa), \
+            f"实际DCPA({actual_dcpa:.3f}海里)应小于0.5海里 " \
+            f"(目标DCPA: {dcpa:.3f}海里)"
+        
+        # ========================================
+        # 属性5.2：验证实际计算的TCPA小于5分钟
+        # ========================================
+        # 验证TCPA小于5分钟（允许小的计算误差）
+        tolerance_tcpa = 0.5  # 允许0.5分钟的误差
+        assert actual_tcpa < (5.0 + tolerance_tcpa), \
+            f"实际TCPA({actual_tcpa:.2f}分钟)应小于5分钟 " \
+            f"(目标TCPA: {tcpa:.2f}分钟)"
+        
+        # ========================================
+        # 属性5.3：验证实际DCPA接近目标DCPA
+        # ========================================
+        # 实际DCPA应该接近目标DCPA（允许一定的计算误差）
+        # 由于反向计算的复杂性，允许较大的相对误差
+        relative_error_dcpa = abs(actual_dcpa - dcpa) / max(dcpa, 0.01)
+        assert relative_error_dcpa < 0.5, \
+            f"实际DCPA({actual_dcpa:.3f})应接近目标DCPA({dcpa:.3f})，" \
+            f"相对误差为{relative_error_dcpa:.2%}"
+        
+        # ========================================
+        # 属性5.4：验证实际TCPA接近目标TCPA
+        # ========================================
+        # 实际TCPA应该接近目标TCPA（允许一定的计算误差）
+        relative_error_tcpa = abs(actual_tcpa - tcpa) / max(tcpa, 0.1)
+        assert relative_error_tcpa < 0.5, \
+            f"实际TCPA({actual_tcpa:.2f})应接近目标TCPA({tcpa:.2f})，" \
+            f"相对误差为{relative_error_tcpa:.2%}"
+        
+        # ========================================
+        # 额外验证：船舶速度正确
+        # ========================================
+        assert ship1.sog == pytest.approx(speed1, rel=1e-6), \
+            f"船1速度应为 {speed1} 节"
+        assert ship2.sog == pytest.approx(speed2, rel=1e-6), \
+            f"船2速度应为 {speed2} 节"
+        
+        # ========================================
+        # 额外验证：两船不在同一位置
+        # ========================================
+        position_diff = math.sqrt(
+            (ship2.latitude - ship1.latitude)**2 + 
+            (ship2.longitude - ship1.longitude)**2
+        )
+        assert position_diff > 0.001, \
+            "两船初始位置应该不同"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=0.5, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=5.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_emergency_collision_course(
+        self, dcpa, tcpa, speed1, speed2
+    ):
+        """
+        **Property 5 扩展：紧急场景的碰撞航线**
+        **Validates: Requirements 2.1**
+        
+        Feature: maritime-collision-avoidance, Property 5: 危险场景的风险参数
+        
+        验证生成的紧急场景中，两艘船舶确实在危险的碰撞航线上。
+        这通过验证DCPA和TCPA都很小来实现。
+        """
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        
+        params = EmergencyParams(
+            dcpa=dcpa,
+            tcpa=tcpa,
+            speed1=speed1,
+            speed2=speed2
+        )
+        
+        scenario = generator.generate_emergency_scenario(params)
+        
+        # 获取实际计算的风险参数
+        actual_dcpa = scenario.success_criteria['actual_dcpa']
+        actual_tcpa = scenario.success_criteria['actual_tcpa']
+        
+        # 验证这是一个危险场景
+        # DCPA小于0.5海里表示会遇距离很近
+        assert actual_dcpa < 0.55, \
+            f"DCPA({actual_dcpa:.3f}海里)应小于0.5海里，表示危险相遇"
+        
+        # TCPA小于5分钟表示很快就会到达最近点
+        assert actual_tcpa < 5.5, \
+            f"TCPA({actual_tcpa:.2f}分钟)应小于5分钟，表示紧急情况"
+        
+        # 验证TCPA为正值（表示还未到达最近点）
+        assert actual_tcpa >= 0, \
+            f"TCPA应为正值，表示还未到达最近点，实际为{actual_tcpa:.2f}分钟"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=0.5, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=5.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_emergency_scenario_consistency(
+        self, dcpa, tcpa, speed1, speed2
+    ):
+        """
+        **Property 5 扩展：紧急场景生成的一致性**
+        **Validates: Requirements 2.1**
+        
+        Feature: maritime-collision-avoidance, Property 5: 危险场景的风险参数
+        
+        验证使用相同参数多次生成场景时，结果应该一致（除了随机的场景ID）。
+        """
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        
+        params = EmergencyParams(
+            dcpa=dcpa,
+            tcpa=tcpa,
+            speed1=speed1,
+            speed2=speed2,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            mmsi1=123456789,
+            mmsi2=987654321
+        )
+        
+        # 生成两次场景
+        scenario1 = generator.generate_emergency_scenario(params)
+        scenario2 = generator.generate_emergency_scenario(params)
+        
+        # 验证船舶状态一致（除了场景ID）
+        ship1_a, ship2_a = scenario1.ships[0], scenario1.ships[1]
+        ship1_b, ship2_b = scenario2.ships[0], scenario2.ships[1]
+        
+        # 船1状态应该一致
+        assert ship1_a.mmsi == ship1_b.mmsi
+        assert ship1_a.latitude == pytest.approx(ship1_b.latitude, abs=1e-9)
+        assert ship1_a.longitude == pytest.approx(ship1_b.longitude, abs=1e-9)
+        assert ship1_a.heading == pytest.approx(ship1_b.heading, abs=1e-9)
+        assert ship1_a.sog == pytest.approx(ship1_b.sog, abs=1e-9)
+        
+        # 船2状态应该一致
+        assert ship2_a.mmsi == ship2_b.mmsi
+        assert ship2_a.latitude == pytest.approx(ship2_b.latitude, abs=1e-9)
+        assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
+        assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
+        assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)
+        
+        # 验证实际DCPA和TCPA一致
+        actual_dcpa_a = scenario1.success_criteria['actual_dcpa']
+        actual_tcpa_a = scenario1.success_criteria['actual_tcpa']
+        actual_dcpa_b = scenario2.success_criteria['actual_dcpa']
+        actual_tcpa_b = scenario2.success_criteria['actual_tcpa']
+        
+        assert actual_dcpa_a == pytest.approx(actual_dcpa_b, abs=1e-9)
+        assert actual_tcpa_a == pytest.approx(actual_tcpa_b, abs=1e-9)
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=0.5, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=5.0, allow_nan=False, allow_infinity=False),
+        speed1=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=10.0, max_value=20.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_emergency_dcpa_tcpa_relationship(
+        self, dcpa, tcpa, speed1, speed2
+    ):
+        """
+        **Property 5 扩展：DCPA和TCPA的关系**
+        **Validates: Requirements 2.1**
+        
+        Feature: maritime-collision-avoidance, Property 5: 危险场景的风险参数
+        
+        验证生成的紧急场景中，DCPA和TCPA的关系是合理的。
+        较小的DCPA和TCPA表示更高的碰撞风险。
+        """
+        from scenario_generator import EmergencyParams
+        
+        generator = ScenarioGenerator()
+        
+        params = EmergencyParams(
+            dcpa=dcpa,
+            tcpa=tcpa,
+            speed1=speed1,
+            speed2=speed2
+        )
+        
+        scenario = generator.generate_emergency_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 获取实际计算的风险参数
+        actual_dcpa = scenario.success_criteria['actual_dcpa']
+        actual_tcpa = scenario.success_criteria['actual_tcpa']
+        
+        # 计算当前距离
+        current_distance_degrees = math.sqrt(
+            (ship2.latitude - ship1.latitude)**2 + 
+            (ship2.longitude - ship1.longitude)**2
+        )
+        current_distance_nm = current_distance_degrees * 60.0  # 转换为海里
+        
+        # 验证当前距离大于DCPA（因为DCPA是最近会遇距离）
+        # 允许小的误差，因为在某些情况下可能已经很接近最近点
+        assert current_distance_nm >= actual_dcpa - 0.1, \
+            f"当前距离({current_distance_nm:.3f}海里)应大于或等于DCPA({actual_dcpa:.3f}海里)"
+        
+        # 验证TCPA为正值（还未到达最近点）
+        assert actual_tcpa >= 0, \
+            f"TCPA应为正值，表示还未到达最近点"
+        
+        # 验证场景持续时间足够长，能够观察到避让过程
+        # 持续时间应至少是TCPA的2倍（允许小的浮点数误差）
+        expected_min_duration = actual_tcpa * 60 * 2
+        assert scenario.duration >= expected_min_duration - 1.0, \
+            f"场景持续时间({scenario.duration}秒)应至少是TCPA的2倍({expected_min_duration}秒)"

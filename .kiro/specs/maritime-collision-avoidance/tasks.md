@@ -65,12 +65,12 @@
     - _Requirements: 1.4_
 
 - [ ] 4. 实现极端场景生成器
-  - [ ] 4.1 实现紧急避让场景生成器
+  - [x] 4.1 实现紧急避让场景生成器
     - 实现 generate_emergency_scenario() 方法
     - 生成DCPA<0.5海里且TCPA<5分钟的场景
     - _Requirements: 2.1_
 
-  - [ ]* 4.2 编写紧急场景的属性测试
+  - [x] 4.2 编写紧急场景的属性测试
     - **Property 5: 危险场景的风险参数**
     - **Validates: Requirements 2.1**
     - _Requirements: 2.1_
