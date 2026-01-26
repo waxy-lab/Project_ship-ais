@@ -1101,3 +1101,369 @@ class TestCrossingScenarioProperties:
         assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
         assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
         assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)
+
+
+
+# ============================================================================
+# 追越场景测试
+# ============================================================================
+
+class TestOvertakingScenarioGenerator:
+    """测试追越场景生成器"""
+    
+    def test_basic_overtaking_generation(self):
+        """测试基本追越场景生成"""
+        from scenario_generator import OvertakingParams
+        
+        generator = ScenarioGenerator()
+        params = OvertakingParams(
+            distance=2.0,
+            speed1=12.0,  # 追越船速度更快
+            speed2=8.0,   # 被追越船速度较慢
+            base_latitude=30.0,
+            base_longitude=120.0
+        )
+        
+        scenario = generator.generate_overtaking_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.OVERTAKING
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证速度关系：追越船（船1）速度大于被追越船（船2）
+        assert ship1.sog > ship2.sog, \
+            f"追越船速度({ship1.sog})应大于被追越船速度({ship2.sog})"
+        
+        # 验证速度值
+        assert ship1.sog == params.speed1
+        assert ship2.sog == params.speed2
+    
+    def test_overtaking_position_relationship(self):
+        """测试追越场景的位置关系"""
+        from scenario_generator import OvertakingParams
+        
+        generator = ScenarioGenerator()
+        params = OvertakingParams(
+            distance=3.0,
+            speed1=15.0,
+            speed2=10.0
+        )
+        
+        scenario = generator.generate_overtaking_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 计算从被追越船（船2）看追越船（船1）的相对方位
+        lon_diff = ship1.longitude - ship2.longitude
+        lat_diff = ship1.latitude - ship2.latitude
+        
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        relative_bearing = bearing - ship2.heading
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        # 追越船应在被追越船后方22.5度扇形区域内
+        # 即相对方位在157.5-202.5度之间（或-202.5到-157.5度）
+        # 简化：正后方是180度（或-180度）
+        assert abs(abs(relative_bearing) - 180) <= 22.5, \
+            f"追越船应在被追越船后方22.5度扇形区域内，相对方位为{relative_bearing:.2f}度"
+
+
+class TestOvertakingParamsValidation:
+    """测试追越场景参数验证"""
+    
+    def test_invalid_speed_relationship(self):
+        """测试速度关系无效（追越船速度不大于被追越船）"""
+        from scenario_generator import OvertakingParams
+        
+        with pytest.raises(ValueError, match="追越船速度.*必须大于被追越船速度"):
+            OvertakingParams(
+                distance=2.0,
+                speed1=10.0,  # 追越船
+                speed2=10.0   # 被追越船（速度相同，无效）
+            )
+    
+    def test_invalid_speed_overtaking_slower(self):
+        """测试追越船速度更慢"""
+        from scenario_generator import OvertakingParams
+        
+        with pytest.raises(ValueError, match="追越船速度.*必须大于被追越船速度"):
+            OvertakingParams(
+                distance=2.0,
+                speed1=8.0,   # 追越船速度更慢
+                speed2=12.0   # 被追越船速度更快
+            )
+    
+    def test_valid_speed_relationship(self):
+        """测试有效的速度关系"""
+        from scenario_generator import OvertakingParams
+        
+        params = OvertakingParams(
+            distance=2.0,
+            speed1=15.0,  # 追越船速度更快
+            speed2=10.0   # 被追越船速度较慢
+        )
+        assert params.speed1 > params.speed2
+
+
+# ============================================================================
+# 追越场景属性测试
+# ============================================================================
+
+class TestOvertakingScenarioProperties:
+    """
+    追越场景生成的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证场景生成的通用正确性
+    """
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=15.0, allow_nan=False, allow_infinity=False),
+        speed_diff=st.floats(min_value=2.0, max_value=10.0, allow_nan=False, allow_infinity=False),
+        base_latitude=st.floats(min_value=20.0, max_value=50.0, allow_nan=False, allow_infinity=False),
+        base_longitude=st.floats(min_value=100.0, max_value=140.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_overtaking_speed_and_position(
+        self, distance, speed2, speed_diff, base_latitude, base_longitude
+    ):
+        """
+        **Property 3: 追越场景的速度和位置关系**
+        **Validates: Requirements 1.3**
+        
+        Feature: maritime-collision-avoidance, Property 3: 追越场景的速度和位置关系
+        
+        对于任何追越场景参数，生成的追越船速度应大于被追越船，
+        且追越船应位于被追越船后方22.5度扇形区域内。
+        
+        这个属性测试使用 Hypothesis 生成随机参数，验证所有情况下速度和位置关系都成立。
+        """
+        from scenario_generator import OvertakingParams
+        
+        # 创建场景生成器
+        generator = ScenarioGenerator()
+        
+        # 计算追越船速度（确保大于被追越船）
+        speed1 = speed2 + speed_diff
+        
+        # 创建参数
+        params = OvertakingParams(
+            distance=distance,
+            speed1=speed1,  # 追越船（速度更快）
+            speed2=speed2,  # 被追越船（速度较慢）
+            base_latitude=base_latitude,
+            base_longitude=base_longitude
+        )
+        
+        # 生成场景
+        scenario = generator.generate_overtaking_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.OVERTAKING, \
+            "场景类型应为 OVERTAKING"
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 2, \
+            "追越场景应包含2艘船舶"
+        
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # ========================================
+        # 属性3.1：追越船速度大于被追越船速度
+        # ========================================
+        assert ship1.sog > ship2.sog, \
+            f"追越船速度({ship1.sog:.2f}节)应大于被追越船速度({ship2.sog:.2f}节)"
+        
+        assert ship1.sog == pytest.approx(speed1, rel=1e-6), \
+            f"追越船速度应为 {speed1} 节"
+        assert ship2.sog == pytest.approx(speed2, rel=1e-6), \
+            f"被追越船速度应为 {speed2} 节"
+        
+        # ========================================
+        # 属性3.2：追越船在被追越船后方22.5度扇形区域内
+        # ========================================
+        # 计算从被追越船（船2）看追越船（船1）的相对方位
+        lon_diff = ship1.longitude - ship2.longitude
+        lat_diff = ship1.latitude - ship2.latitude
+        
+        # 计算方位角（从北顺时针，使用 atan2）
+        bearing = math.degrees(math.atan2(lon_diff, lat_diff))
+        if bearing < 0:
+            bearing += 360
+        
+        # 计算相对方位（方位角 - 航向）
+        relative_bearing = bearing - ship2.heading
+        
+        # 归一化到 -180 到 180 度范围
+        if relative_bearing > 180:
+            relative_bearing -= 360
+        elif relative_bearing < -180:
+            relative_bearing += 360
+        
+        # 验证追越船在被追越船后方22.5度扇形区域内
+        # 后方22.5度扇形区域：157.5度到202.5度（或-202.5度到-157.5度）
+        # 即相对方位的绝对值应在157.5到180度之间（允许小误差）
+        abs_relative_bearing = abs(relative_bearing)
+        
+        # 允许小的浮点数误差（1度）
+        tolerance = 1.0
+        assert (157.5 - tolerance) <= abs_relative_bearing <= (180 + tolerance), \
+            f"追越船应在被追越船后方22.5度扇形区域内，" \
+            f"相对方位为 {relative_bearing:.2f} 度 " \
+            f"(绝对值: {abs_relative_bearing:.2f}°, " \
+            f"bearing: {bearing:.2f}°, ship2 heading: {ship2.heading:.2f}°)"
+        
+        # ========================================
+        # 属性3.3：两船航向基本相同
+        # ========================================
+        # 追越场景中，两船应该沿相同或接近的航向航行
+        heading_diff = abs(ship1.heading - ship2.heading)
+        if heading_diff > 180:
+            heading_diff = 360 - heading_diff
+        
+        # 航向差应该很小（允许10度以内的差异）
+        assert heading_diff <= 10, \
+            f"追越场景中两船航向应基本相同，航向差为 {heading_diff:.2f} 度 " \
+            f"(ship1: {ship1.heading:.2f}°, ship2: {ship2.heading:.2f}°)"
+        
+        # ========================================
+        # 额外验证：船舶距离正确
+        # ========================================
+        # 计算实际距离
+        actual_distance_degrees = math.sqrt(
+            (ship2.latitude - ship1.latitude)**2 + 
+            (ship2.longitude - ship1.longitude)**2
+        )
+        expected_distance_degrees = distance * (1.0 / 60.0)  # 海里转度
+        
+        # 允许一定的误差
+        assert abs(actual_distance_degrees - expected_distance_degrees) < 0.01, \
+            f"船舶距离应约为 {distance} 海里，实际距离为 {actual_distance_degrees * 60:.2f} 海里"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=15.0, allow_nan=False, allow_infinity=False),
+        speed_diff=st.floats(min_value=2.0, max_value=10.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_overtaking_will_catch_up(
+        self, distance, speed2, speed_diff
+    ):
+        """
+        **Property 3 扩展：追越船会追上被追越船**
+        **Validates: Requirements 1.3**
+        
+        Feature: maritime-collision-avoidance, Property 3: 追越场景的速度和位置关系
+        
+        验证生成的追越场景中，追越船最终会追上被追越船（如果不改变航向）。
+        这通过验证追越船在被追越船后方且速度更快来实现。
+        """
+        from scenario_generator import OvertakingParams
+        
+        generator = ScenarioGenerator()
+        
+        speed1 = speed2 + speed_diff
+        
+        params = OvertakingParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2
+        )
+        
+        scenario = generator.generate_overtaking_scenario(params)
+        ship1, ship2 = scenario.ships[0], scenario.ships[1]
+        
+        # 验证追越船在被追越船后方
+        # 如果两船航向相同（向北），追越船应在南侧（纬度更小）
+        if abs(ship1.heading - ship2.heading) < 10:
+            # 根据航向判断前后关系
+            if 315 <= ship2.heading or ship2.heading < 45:  # 向北
+                assert ship1.latitude < ship2.latitude, \
+                    "追越船应在被追越船后方（南侧）"
+            elif 45 <= ship2.heading < 135:  # 向东
+                assert ship1.longitude < ship2.longitude, \
+                    "追越船应在被追越船后方（西侧）"
+            elif 135 <= ship2.heading < 225:  # 向南
+                assert ship1.latitude > ship2.latitude, \
+                    "追越船应在被追越船后方（北侧）"
+            elif 225 <= ship2.heading < 315:  # 向西
+                assert ship1.longitude > ship2.longitude, \
+                    "追越船应在被追越船后方（东侧）"
+        
+        # 验证速度关系
+        assert ship1.sog > ship2.sog, \
+            "追越船速度应大于被追越船速度"
+        
+        # 计算追上所需时间（简化计算）
+        relative_speed = ship1.sog - ship2.sog  # 相对速度（节）
+        time_to_catch_up = distance / relative_speed  # 小时
+        
+        # 验证追上时间是合理的（不会太长）
+        assert time_to_catch_up > 0, \
+            "追越船应该能够追上被追越船"
+        assert time_to_catch_up < 10, \
+            f"追上时间应该合理（小于10小时），实际为 {time_to_catch_up:.2f} 小时"
+    
+    @given(
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        speed2=st.floats(min_value=5.0, max_value=15.0, allow_nan=False, allow_infinity=False),
+        speed_diff=st.floats(min_value=2.0, max_value=10.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_property_overtaking_scenario_consistency(
+        self, distance, speed2, speed_diff
+    ):
+        """
+        **Property 3 扩展：追越场景生成的一致性**
+        **Validates: Requirements 1.3**
+        
+        Feature: maritime-collision-avoidance, Property 3: 追越场景的速度和位置关系
+        
+        验证使用相同参数多次生成场景时，结果应该一致（除了随机的场景ID）。
+        """
+        from scenario_generator import OvertakingParams
+        
+        generator = ScenarioGenerator()
+        
+        speed1 = speed2 + speed_diff
+        
+        params = OvertakingParams(
+            distance=distance,
+            speed1=speed1,
+            speed2=speed2,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            mmsi1=123456789,
+            mmsi2=987654321
+        )
+        
+        # 生成两次场景
+        scenario1 = generator.generate_overtaking_scenario(params)
+        scenario2 = generator.generate_overtaking_scenario(params)
+        
+        # 验证船舶状态一致（除了场景ID）
+        ship1_a, ship2_a = scenario1.ships[0], scenario1.ships[1]
+        ship1_b, ship2_b = scenario2.ships[0], scenario2.ships[1]
+        
+        # 船1状态应该一致
+        assert ship1_a.mmsi == ship1_b.mmsi
+        assert ship1_a.latitude == pytest.approx(ship1_b.latitude, abs=1e-9)
+        assert ship1_a.longitude == pytest.approx(ship1_b.longitude, abs=1e-9)
+        assert ship1_a.heading == pytest.approx(ship1_b.heading, abs=1e-9)
+        assert ship1_a.sog == pytest.approx(ship1_b.sog, abs=1e-9)
+        
+        # 船2状态应该一致
+        assert ship2_a.mmsi == ship2_b.mmsi
+        assert ship2_a.latitude == pytest.approx(ship2_b.latitude, abs=1e-9)
+        assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
+        assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
+        assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)

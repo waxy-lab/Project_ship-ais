@@ -45,12 +45,12 @@
     - **Validates: Requirements 1.2**
     - _Requirements: 1.2_
 
-  - [ ] 3.3 实现追越场景生成器
+  - [x] 3.3 实现追越场景生成器
     - 实现 generate_overtaking_scenario() 方法
     - 确保追越船在后方22.5度扇形区域且速度更快
     - _Requirements: 1.3_
 
-  - [ ]* 3.4 编写追越场景生成的属性测试
+  - [x] 3.4 编写追越场景生成的属性测试
     - **Property 3: 追越场景的速度和位置关系**
     - **Validates: Requirements 1.3**
     - _Requirements: 1.3_
