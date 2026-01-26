@@ -55,12 +55,12 @@
     - **Validates: Requirements 1.3**
     - _Requirements: 1.3_
 
-  - [ ] 3.5 实现多船复杂场景生成器
+  - [x] 3.5 实现多船复杂场景生成器
     - 实现 generate_multi_ship_scenario() 方法
     - 支持3艘以上船舶的场景，随机分布在指定区域
     - _Requirements: 1.4_
 
-  - [ ]* 3.6 编写多船场景生成的单元测试
+  - [x] 3.6 编写多船场景生成的单元测试
     - 测试船舶数量和初始状态
     - _Requirements: 1.4_
 

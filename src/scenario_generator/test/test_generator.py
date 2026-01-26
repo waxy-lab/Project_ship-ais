@@ -1467,3 +1467,555 @@ class TestOvertakingScenarioProperties:
         assert ship2_a.longitude == pytest.approx(ship2_b.longitude, abs=1e-9)
         assert ship2_a.heading == pytest.approx(ship2_b.heading, abs=1e-9)
         assert ship2_a.sog == pytest.approx(ship2_b.sog, abs=1e-9)
+
+
+
+# ============================================================================
+# 多船场景测试
+# ============================================================================
+
+class TestMultiShipScenarioGenerator:
+    """测试多船复杂场景生成器"""
+    
+    def test_basic_multi_ship_generation(self):
+        """测试基本多船场景生成"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=3,
+            area_size=5.0,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            min_speed=5.0,
+            max_speed=20.0
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证场景类型
+        assert scenario.scenario_type == ScenarioType.MULTI_SHIP
+        
+        # 验证船舶数量
+        assert len(scenario.ships) == 3, \
+            f"应生成3艘船舶，实际生成{len(scenario.ships)}艘"
+        
+        # 验证每艘船的基本属性
+        for i, ship in enumerate(scenario.ships):
+            assert ship.mmsi is not None, f"船{i+1}的MMSI不应为空"
+            assert -90 <= ship.latitude <= 90, f"船{i+1}的纬度应在有效范围内"
+            assert -180 <= ship.longitude <= 180, f"船{i+1}的经度应在有效范围内"
+            assert 0 <= ship.heading < 360, f"船{i+1}的航向应在0-360度之间"
+            assert params.min_speed <= ship.sog <= params.max_speed, \
+                f"船{i+1}的速度应在{params.min_speed}-{params.max_speed}节之间"
+    
+    def test_multi_ship_with_different_counts(self):
+        """测试不同数量的多船场景"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        
+        # 测试3艘船
+        params = MultiShipParams(num_ships=3, area_size=5.0)
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 3
+        
+        # 测试5艘船
+        params = MultiShipParams(num_ships=5, area_size=10.0)
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 5
+        
+        # 测试10艘船
+        params = MultiShipParams(num_ships=10, area_size=15.0)
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 10
+    
+    def test_multi_ship_ships_within_area(self):
+        """测试船舶位置在指定区域内"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            base_latitude=30.0,
+            base_longitude=120.0
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 计算区域边界
+        area_size_degrees = params.area_size * (1.0 / 60.0)
+        min_lat = params.base_latitude - area_size_degrees / 2
+        max_lat = params.base_latitude + area_size_degrees / 2
+        min_lon = params.base_longitude - area_size_degrees / 2
+        max_lon = params.base_longitude + area_size_degrees / 2
+        
+        # 验证所有船舶都在区域内
+        for i, ship in enumerate(scenario.ships):
+            assert min_lat <= ship.latitude <= max_lat, \
+                f"船{i+1}的纬度{ship.latitude}应在区域内[{min_lat}, {max_lat}]"
+            assert min_lon <= ship.longitude <= max_lon, \
+                f"船{i+1}的经度{ship.longitude}应在区域内[{min_lon}, {max_lon}]"
+    
+    def test_multi_ship_minimum_distance(self):
+        """测试船舶之间保持最小距离"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            seed=42  # 使用固定种子确保可重复性
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 最小距离（海里）
+        MIN_DISTANCE = 0.3
+        min_distance_degrees = MIN_DISTANCE * (1.0 / 60.0)
+        
+        # 检查所有船舶对之间的距离
+        ships = scenario.ships
+        for i in range(len(ships)):
+            for j in range(i + 1, len(ships)):
+                lat_diff = ships[i].latitude - ships[j].latitude
+                lon_diff = ships[i].longitude - ships[j].longitude
+                distance = math.sqrt(lat_diff**2 + lon_diff**2)
+                
+                assert distance >= min_distance_degrees, \
+                    f"船{i+1}和船{j+1}之间的距离{distance * 60:.2f}海里小于最小距离{MIN_DISTANCE}海里"
+    
+    def test_multi_ship_unique_mmsi(self):
+        """测试每艘船有唯一的MMSI"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=5, area_size=10.0)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 收集所有MMSI
+        mmsi_list = [ship.mmsi for ship in scenario.ships]
+        
+        # 验证MMSI唯一性
+        assert len(mmsi_list) == len(set(mmsi_list)), \
+            "所有船舶应有唯一的MMSI"
+    
+    def test_multi_ship_speed_range(self):
+        """测试船舶速度在指定范围内"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            min_speed=8.0,
+            max_speed=15.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶速度在范围内
+        for i, ship in enumerate(scenario.ships):
+            assert params.min_speed <= ship.sog <= params.max_speed, \
+                f"船{i+1}的速度{ship.sog}节应在{params.min_speed}-{params.max_speed}节之间"
+    
+    def test_multi_ship_heading_range(self):
+        """测试船舶航向在有效范围内"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=5, area_size=10.0, seed=42)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶航向在0-360度之间
+        for i, ship in enumerate(scenario.ships):
+            assert 0 <= ship.heading < 360, \
+                f"船{i+1}的航向{ship.heading}度应在0-360度之间"
+    
+    def test_multi_ship_with_seed_reproducibility(self):
+        """测试使用相同种子生成相同场景"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            base_latitude=30.0,
+            base_longitude=120.0,
+            min_speed=5.0,
+            max_speed=20.0,
+            seed=12345
+        )
+        
+        # 生成两次场景
+        scenario1 = generator.generate_multi_ship_scenario(params)
+        scenario2 = generator.generate_multi_ship_scenario(params)
+        
+        # 验证船舶数量相同
+        assert len(scenario1.ships) == len(scenario2.ships)
+        
+        # 验证每艘船的状态相同
+        for i in range(len(scenario1.ships)):
+            ship1 = scenario1.ships[i]
+            ship2 = scenario2.ships[i]
+            
+            assert ship1.mmsi == ship2.mmsi
+            assert ship1.latitude == pytest.approx(ship2.latitude, abs=1e-9)
+            assert ship1.longitude == pytest.approx(ship2.longitude, abs=1e-9)
+            assert ship1.heading == pytest.approx(ship2.heading, abs=1e-9)
+            assert ship1.sog == pytest.approx(ship2.sog, abs=1e-9)
+    
+    def test_multi_ship_scenario_metadata(self):
+        """测试多船场景的元数据"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=5, area_size=10.0)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证场景ID存在且非空
+        assert scenario.scenario_id
+        assert scenario.scenario_id.startswith("multi_ship_")
+        
+        # 验证场景描述
+        assert scenario.description
+        assert "多船复杂场景" in scenario.description
+        assert "5艘船舶" in scenario.description
+        
+        # 验证成功标准
+        assert 'min_distance' in scenario.success_criteria
+        assert 'collision_avoided' in scenario.success_criteria
+        
+        # 验证持续时间
+        assert scenario.duration == 600.0
+
+
+class TestMultiShipParamsValidation:
+    """测试多船场景参数验证"""
+    
+    def test_invalid_num_ships_too_few(self):
+        """测试船舶数量过少（少于3艘）"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="多船场景至少需要3艘船舶"):
+            MultiShipParams(num_ships=2, area_size=5.0)
+    
+    def test_invalid_num_ships_zero(self):
+        """测试船舶数量为0"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="多船场景至少需要3艘船舶"):
+            MultiShipParams(num_ships=0, area_size=5.0)
+    
+    def test_invalid_num_ships_negative(self):
+        """测试船舶数量为负数"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="多船场景至少需要3艘船舶"):
+            MultiShipParams(num_ships=-1, area_size=5.0)
+    
+    def test_invalid_num_ships_too_many(self):
+        """测试船舶数量过多（超过20艘）"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="船舶数量不应超过20艘"):
+            MultiShipParams(num_ships=21, area_size=50.0)
+    
+    def test_invalid_area_size_zero(self):
+        """测试区域大小为0"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="区域大小必须大于0"):
+            MultiShipParams(num_ships=3, area_size=0.0)
+    
+    def test_invalid_area_size_negative(self):
+        """测试区域大小为负数"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="区域大小必须大于0"):
+            MultiShipParams(num_ships=3, area_size=-5.0)
+    
+    def test_invalid_area_size_too_large(self):
+        """测试区域大小过大"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="区域大小不应超过50海里"):
+            MultiShipParams(num_ships=3, area_size=51.0)
+    
+    def test_invalid_min_speed_zero(self):
+        """测试最小速度为0"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="最小速度必须大于0"):
+            MultiShipParams(num_ships=3, area_size=5.0, min_speed=0.0)
+    
+    def test_invalid_min_speed_negative(self):
+        """测试最小速度为负数"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="最小速度必须大于0"):
+            MultiShipParams(num_ships=3, area_size=5.0, min_speed=-5.0)
+    
+    def test_invalid_max_speed_less_than_min(self):
+        """测试最大速度小于最小速度"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="最大速度.*必须大于最小速度"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                min_speed=15.0,
+                max_speed=10.0
+            )
+    
+    def test_invalid_max_speed_equal_to_min(self):
+        """测试最大速度等于最小速度"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="最大速度.*必须大于最小速度"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                min_speed=10.0,
+                max_speed=10.0
+            )
+    
+    def test_invalid_max_speed_too_high(self):
+        """测试最大速度过大"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="最大速度不应超过50节"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                min_speed=5.0,
+                max_speed=51.0
+            )
+    
+    def test_invalid_latitude_too_low(self):
+        """测试纬度过低"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="纬度必须在-90到90之间"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                base_latitude=-91.0
+            )
+    
+    def test_invalid_latitude_too_high(self):
+        """测试纬度过高"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="纬度必须在-90到90之间"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                base_latitude=91.0
+            )
+    
+    def test_invalid_longitude_too_low(self):
+        """测试经度过低"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="经度必须在-180到180之间"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                base_longitude=-181.0
+            )
+    
+    def test_invalid_longitude_too_high(self):
+        """测试经度过高"""
+        from scenario_generator import MultiShipParams
+        
+        with pytest.raises(ValueError, match="经度必须在-180到180之间"):
+            MultiShipParams(
+                num_ships=3,
+                area_size=5.0,
+                base_longitude=181.0
+            )
+    
+    def test_valid_boundary_values(self):
+        """测试边界值"""
+        from scenario_generator import MultiShipParams
+        
+        # 最小船舶数量
+        params = MultiShipParams(num_ships=3, area_size=5.0)
+        assert params.num_ships == 3
+        
+        # 最大船舶数量
+        params = MultiShipParams(num_ships=20, area_size=50.0)
+        assert params.num_ships == 20
+        
+        # 最小区域大小
+        params = MultiShipParams(num_ships=3, area_size=0.1)
+        assert params.area_size == 0.1
+        
+        # 最大区域大小
+        params = MultiShipParams(num_ships=3, area_size=50.0)
+        assert params.area_size == 50.0
+        
+        # 边界纬度
+        params = MultiShipParams(num_ships=3, area_size=5.0, base_latitude=-90.0)
+        assert params.base_latitude == -90.0
+        
+        params = MultiShipParams(num_ships=3, area_size=5.0, base_latitude=90.0)
+        assert params.base_latitude == 90.0
+        
+        # 边界经度
+        params = MultiShipParams(num_ships=3, area_size=5.0, base_longitude=-180.0)
+        assert params.base_longitude == -180.0
+        
+        params = MultiShipParams(num_ships=3, area_size=5.0, base_longitude=180.0)
+        assert params.base_longitude == 180.0
+        
+        # 最大速度
+        params = MultiShipParams(
+            num_ships=3,
+            area_size=5.0,
+            min_speed=5.0,
+            max_speed=50.0
+        )
+        assert params.max_speed == 50.0
+
+
+class TestMultiShipScenarioEdgeCases:
+    """测试多船场景生成器的边界情况"""
+    
+    def test_minimum_ships(self):
+        """测试最小船舶数量（3艘）"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=3, area_size=5.0)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 3
+    
+    def test_maximum_ships(self):
+        """测试最大船舶数量（20艘）"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=20, area_size=50.0, seed=42)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 20
+    
+    def test_small_area_few_ships(self):
+        """测试小区域少量船舶"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=3, area_size=1.0, seed=42)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 3
+    
+    def test_large_area_many_ships(self):
+        """测试大区域大量船舶"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(num_ships=15, area_size=40.0, seed=42)
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        assert len(scenario.ships) == 15
+    
+    def test_narrow_speed_range(self):
+        """测试窄速度范围"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            min_speed=10.0,
+            max_speed=11.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶速度在窄范围内
+        for ship in scenario.ships:
+            assert 10.0 <= ship.sog <= 11.0
+    
+    def test_wide_speed_range(self):
+        """测试宽速度范围"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=5,
+            area_size=10.0,
+            min_speed=5.0,
+            max_speed=50.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶速度在宽范围内
+        for ship in scenario.ships:
+            assert 5.0 <= ship.sog <= 50.0
+    
+    def test_extreme_latitude_north(self):
+        """测试极北纬度"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=3,
+            area_size=5.0,
+            base_latitude=85.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶位置有效
+        for ship in scenario.ships:
+            assert -90 <= ship.latitude <= 90
+    
+    def test_extreme_latitude_south(self):
+        """测试极南纬度"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=3,
+            area_size=5.0,
+            base_latitude=-85.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶位置有效
+        for ship in scenario.ships:
+            assert -90 <= ship.latitude <= 90
+    
+    def test_date_line_crossing(self):
+        """测试跨越日期变更线"""
+        from scenario_generator import MultiShipParams
+        
+        generator = ScenarioGenerator()
+        params = MultiShipParams(
+            num_ships=3,
+            area_size=5.0,
+            base_longitude=179.0,
+            seed=42
+        )
+        
+        scenario = generator.generate_multi_ship_scenario(params)
+        
+        # 验证所有船舶位置有效
+        for ship in scenario.ships:
+            assert -180 <= ship.longitude <= 180
