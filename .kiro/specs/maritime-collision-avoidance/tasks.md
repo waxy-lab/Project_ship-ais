@@ -75,29 +75,29 @@
     - **Validates: Requirements 2.1**
     - _Requirements: 2.1_
 
-- [ ] 5. Checkpoint - 场景生成器验证
+- [x] 5. Checkpoint - 场景生成器验证
   - 运行所有场景生成器测试
   - 手动验证生成的场景配置文件
   - 确保所有测试通过，询问用户是否有问题
 
 - [ ] 6. 实现碰撞风险评估模块
-  - [ ] 6.1 创建风险评估模块文件结构
+  - [x] 6.1 创建风险评估模块文件结构
     - 在 collision_avoidance 包中创建 risk_assessment.py
     - 定义风险评估相关的数据类和常量
     - _Requirements: 4.1-4.4_
 
-  - [ ] 6.2 实现DCPA/TCPA计算函数
+  - [x] 6.2 实现DCPA/TCPA计算函数
     - 实现 calculate_dcpa_tcpa() 函数
     - 使用相对运动矢量法，处理边界情况
     - _Requirements: 4.1_
 
-  - [ ]* 6.3 编写DCPA/TCPA计算的属性测试
+  - [x] 6.3 编写DCPA/TCPA计算的属性测试
     - **Property 6: DCPA/TCPA计算的对称性**
     - **Validates: Requirements 4.1**
     - 验证从两个视角计算结果一致
     - _Requirements: 4.1_
 
-  - [ ]* 6.4 编写DCPA/TCPA计算的单元测试
+  - [x] 6.4 编写DCPA/TCPA计算的单元测试
     - 测试平行航行、相向航行等特殊情况
     - 测试边界情况（静止船舶、相同位置等）
     - _Requirements: 4.1_

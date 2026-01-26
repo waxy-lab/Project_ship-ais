@@ -8,3 +8,44 @@
 """
 
 __version__ = "0.1.0"
+
+# 导出风险评估模块
+from .risk_assessment import (
+    # 常量
+    SAFE_DISTANCE,
+    SAFE_TIME,
+    RISK_THRESHOLD_WARNING,
+    RISK_THRESHOLD_DANGER,
+    EMERGENCY_DCPA_THRESHOLD,
+    EMERGENCY_TCPA_THRESHOLD,
+    # 枚举
+    RiskLevel,
+    # 数据类
+    RiskAssessment,
+    CollisionRiskFactors,
+    # 辅助函数
+    degrees_to_nautical_miles,
+    nautical_miles_to_degrees,
+    normalize_angle,
+    determine_risk_level,
+)
+
+__all__ = [
+    # 常量
+    'SAFE_DISTANCE',
+    'SAFE_TIME',
+    'RISK_THRESHOLD_WARNING',
+    'RISK_THRESHOLD_DANGER',
+    'EMERGENCY_DCPA_THRESHOLD',
+    'EMERGENCY_TCPA_THRESHOLD',
+    # 枚举
+    'RiskLevel',
+    # 数据类
+    'RiskAssessment',
+    'CollisionRiskFactors',
+    # 辅助函数
+    'degrees_to_nautical_miles',
+    'nautical_miles_to_degrees',
+    'normalize_angle',
+    'determine_risk_level',
+]

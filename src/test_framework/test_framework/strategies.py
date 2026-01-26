@@ -41,10 +41,10 @@ def longitude_strategy(draw):
 
 @composite
 def heading_strategy(draw):
-    """生成有效的航向值 (0 到 360 度)"""
+    """生成有效的航向值 (0 到 360 度，不包括360)"""
     return draw(st.floats(
         min_value=0.0, 
-        max_value=360.0, 
+        max_value=359.999999, 
         allow_nan=False, 
         allow_infinity=False
     ))
@@ -110,7 +110,7 @@ def ship_state_strategy(draw,
     lat_min, lat_max = lat_range if lat_range else (-90.0, 90.0)
     lon_min, lon_max = lon_range if lon_range else (-180.0, 180.0)
     speed_min, speed_max = speed_range if speed_range else (0.0, 30.0)
-    heading_min, heading_max = heading_range if heading_range else (0.0, 360.0)
+    heading_min, heading_max = heading_range if heading_range else (0.0, 359.999999)
     
     return {
         'mmsi': draw(mmsi_strategy()),
@@ -132,13 +132,13 @@ def ship_state_strategy(draw,
             allow_nan=False, 
             allow_infinity=False
         )),
-        'speed': draw(st.floats(
+        'sog': draw(st.floats(
             min_value=speed_min, 
             max_value=speed_max, 
             allow_nan=False, 
             allow_infinity=False
         )),
-        'rate_of_turn': draw(rate_of_turn_strategy()),
+        'rot': draw(rate_of_turn_strategy()),
         'course': draw(heading_strategy()),
         'navigation_status': draw(st.sampled_from([
             'under way using engine', 
@@ -396,8 +396,8 @@ def head_on_scenario_strategy(draw):
         'latitude': params['base_lat'],
         'longitude': params['base_lon'],
         'heading': 90.0,
-        'speed': params['speed1'],
-        'rate_of_turn': 0.0,
+        'sog': params['speed1'],
+        'rot': 0.0,
         'course': 90.0,
         'navigation_status': 'under way using engine'
     }
@@ -407,8 +407,8 @@ def head_on_scenario_strategy(draw):
         'latitude': params['base_lat'],
         'longitude': params['base_lon'] + params['distance'] / 60.0,  # 转换为度
         'heading': 270.0,
-        'speed': params['speed2'],
-        'rate_of_turn': 0.0,
+        'sog': params['speed2'],
+        'rot': 0.0,
         'course': 270.0,
         'navigation_status': 'under way using engine'
     }
