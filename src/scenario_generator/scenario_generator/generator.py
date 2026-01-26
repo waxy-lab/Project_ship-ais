@@ -152,10 +152,33 @@ class EmergencyParams:
     """紧急场景参数"""
     dcpa: float                  # 目标DCPA（海里）
     tcpa: float                  # 目标TCPA（分钟）
+    speed1: float = 15.0         # 船1速度（节）
+    speed2: float = 15.0         # 船2速度（节）
     base_latitude: float = 30.0  # 基准纬度
     base_longitude: float = 120.0  # 基准经度
     mmsi1: int = 123456789       # 船1 MMSI
     mmsi2: int = 987654321       # 船2 MMSI
+    
+    def __post_init__(self):
+        """参数验证"""
+        if self.dcpa < 0:
+            raise ValueError(f"DCPA必须非负: {self.dcpa}")
+        if self.dcpa > 2.0:
+            raise ValueError(f"DCPA不应超过2海里（紧急场景）: {self.dcpa}")
+        if self.tcpa < 0:
+            raise ValueError(f"TCPA必须非负: {self.tcpa}")
+        if self.tcpa > 30:
+            raise ValueError(f"TCPA不应超过30分钟（紧急场景）: {self.tcpa}")
+        if self.speed1 <= 0:
+            raise ValueError(f"船1速度必须大于0: {self.speed1}")
+        if self.speed2 <= 0:
+            raise ValueError(f"船2速度必须大于0: {self.speed2}")
+        if self.speed1 > 50 or self.speed2 > 50:
+            raise ValueError(f"速度不应超过50节")
+        if not (-90 <= self.base_latitude <= 90):
+            raise ValueError(f"纬度必须在-90到90之间: {self.base_latitude}")
+        if not (-180 <= self.base_longitude <= 180):
+            raise ValueError(f"经度必须在-180到180之间: {self.base_longitude}")
 
 
 class ScenarioGenerator:
@@ -561,13 +584,194 @@ class ScenarioGenerator:
         return scenario
     
     def generate_emergency_scenario(self, params: EmergencyParams) -> ScenarioConfig:
-        """生成紧急场景
+        """生成紧急避让场景
+        
+        紧急场景定义：两艘船舶处于危险相遇状态
+        
+        根据需求 2.1：
+        - DCPA（最近会遇距离）< 0.5 海里
+        - TCPA（到达最近点时间）< 5 分钟
+        
+        实现策略：
+        使用相对运动矢量法反向计算船舶初始位置和航向
+        
+        DCPA/TCPA 计算公式（来自设计文档）：
+        - 相对位置矢量: (dx, dy) = (lon2 - lon1, lat2 - lat1)
+        - 相对速度矢量: (dvx, dvy) = (vx2 - vx1, vy2 - vy1)
+        - TCPA = -(dx * dvx + dy * dvy) / (dvx^2 + dvy^2)
+        - DCPA = sqrt((dx + dvx * tcpa)^2 + (dy + dvy * tcpa)^2)
+        
+        反向设计：
+        1. 设定两船的速度和航向（接近对遇但有偏移）
+        2. 根据目标 DCPA 和 TCPA 反向计算初始位置
+        3. 验证生成的场景满足要求
         
         Args:
             params: 紧急场景参数
             
         Returns:
             ScenarioConfig: 生成的场景配置
+            
+        Raises:
+            ValueError: 参数无效时抛出
         """
-        # TODO: 实现紧急场景生成
-        raise NotImplementedError("紧急场景生成尚未实现")
+        # 将 TCPA 从分钟转换为小时（用于速度计算）
+        tcpa_hours = params.tcpa / 60.0
+        
+        # 将 DCPA 转换为度（纬度/经度）
+        # 1 海里 ≈ 1/60 度
+        dcpa_degrees = params.dcpa * self.NAUTICAL_MILE_TO_DEGREE
+        
+        # 策略：创建一个接近对遇的场景，但有纬度偏移以产生非零的 DCPA
+        # 船1：向东航行（90度）
+        # 船2：向西航行（270度）
+        # 两船在不同纬度上，这样会产生非零的 DCPA
+        
+        ship1_heading = 90.0  # 向东
+        ship2_heading = 270.0  # 向西
+        
+        # 计算速度分量（节转换为度/小时）
+        # vx = speed * sin(heading), vy = speed * cos(heading)
+        ship1_vx = params.speed1 * self.NAUTICAL_MILE_TO_DEGREE * math.sin(math.radians(ship1_heading))
+        ship1_vy = params.speed1 * self.NAUTICAL_MILE_TO_DEGREE * math.cos(math.radians(ship1_heading))
+        
+        ship2_vx = params.speed2 * self.NAUTICAL_MILE_TO_DEGREE * math.sin(math.radians(ship2_heading))
+        ship2_vy = params.speed2 * self.NAUTICAL_MILE_TO_DEGREE * math.cos(math.radians(ship2_heading))
+        
+        # 相对速度矢量
+        dvx = ship2_vx - ship1_vx
+        dvy = ship2_vy - ship1_vy
+        
+        # 在 TCPA 时刻，两船的相对位置应该是 DCPA
+        # 为了产生非零的 DCPA，我们让 DCPA 在 y 方向（纬度方向）
+        # 在 TCPA 时刻：
+        # dx_at_tcpa = 0 (两船在同一经度)
+        # dy_at_tcpa = dcpa_degrees (纬度差为 DCPA)
+        
+        # 反向计算初始相对位置：
+        # dx_initial = dx_at_tcpa - dvx * tcpa = 0 - dvx * tcpa
+        # dy_initial = dy_at_tcpa - dvy * tcpa = dcpa - dvy * tcpa
+        
+        dx_initial = -dvx * tcpa_hours
+        dy_initial = dcpa_degrees - dvy * tcpa_hours
+        
+        # 计算初始距离
+        initial_distance = math.sqrt(dx_initial**2 + dy_initial**2)
+        
+        # 设置船1在基准位置
+        ship1_lat = params.base_latitude
+        ship1_lon = params.base_longitude
+        
+        # 船2的位置根据相对位置计算
+        ship2_lon = ship1_lon + dx_initial
+        ship2_lat = ship1_lat + dy_initial
+        
+        # 创建船舶状态
+        ship1 = ShipState(
+            mmsi=params.mmsi1,
+            latitude=ship1_lat,
+            longitude=ship1_lon,
+            heading=ship1_heading,
+            sog=params.speed1,
+            rot=0.0,
+            navigation_status="under_way_using_engine"
+        )
+        
+        ship2 = ShipState(
+            mmsi=params.mmsi2,
+            latitude=ship2_lat,
+            longitude=ship2_lon,
+            heading=ship2_heading,
+            sog=params.speed2,
+            rot=0.0,
+            navigation_status="under_way_using_engine"
+        )
+        
+        # 验证生成的场景（计算实际的 DCPA 和 TCPA）
+        actual_dcpa, actual_tcpa = self._calculate_dcpa_tcpa(ship1, ship2)
+        
+        # 生成场景ID
+        scenario_id = f"emergency_{uuid.uuid4().hex[:8]}"
+        
+        # 创建场景描述
+        description = (
+            f"紧急避让场景：两船初始相距{initial_distance/self.NAUTICAL_MILE_TO_DEGREE:.2f}海里，"
+            f"目标DCPA={params.dcpa:.2f}海里，目标TCPA={params.tcpa:.1f}分钟，"
+            f"实际DCPA={actual_dcpa:.2f}海里，实际TCPA={actual_tcpa:.1f}分钟，"
+            f"船1速度{params.speed1}节航向{ship1_heading:.1f}度，"
+            f"船2速度{params.speed2}节航向{ship2_heading:.1f}度"
+        )
+        
+        # 创建场景配置
+        scenario = ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.EMERGENCY,
+            ships=[ship1, ship2],
+            environment=self.environment,
+            duration=max(300.0, params.tcpa * 60 * 2),  # 至少5分钟，或 TCPA 的2倍
+            success_criteria={
+                'min_distance': params.dcpa,  # 最小距离等于目标 DCPA
+                'collision_avoided': True,
+                'target_dcpa': params.dcpa,
+                'target_tcpa': params.tcpa,
+                'actual_dcpa': actual_dcpa,
+                'actual_tcpa': actual_tcpa
+            },
+            description=description
+        )
+        
+        return scenario
+    
+    def _calculate_dcpa_tcpa(self, ship1: ShipState, ship2: ShipState) -> tuple[float, float]:
+        """计算两船的 DCPA 和 TCPA
+        
+        使用相对运动矢量法（来自设计文档）
+        
+        Args:
+            ship1: 船1状态
+            ship2: 船2状态
+            
+        Returns:
+            (dcpa, tcpa): DCPA（海里）和 TCPA（分钟）
+        """
+        # 相对位置矢量（度）
+        dx = ship2.longitude - ship1.longitude
+        dy = ship2.latitude - ship1.latitude
+        
+        # 速度分量（度/小时）
+        ship1_vx = ship1.sog * self.NAUTICAL_MILE_TO_DEGREE * math.sin(math.radians(ship1.heading))
+        ship1_vy = ship1.sog * self.NAUTICAL_MILE_TO_DEGREE * math.cos(math.radians(ship1.heading))
+        
+        ship2_vx = ship2.sog * self.NAUTICAL_MILE_TO_DEGREE * math.sin(math.radians(ship2.heading))
+        ship2_vy = ship2.sog * self.NAUTICAL_MILE_TO_DEGREE * math.cos(math.radians(ship2.heading))
+        
+        # 相对速度矢量（度/小时）
+        dvx = ship2_vx - ship1_vx
+        dvy = ship2_vy - ship1_vy
+        
+        # 避免除以零
+        dv_squared = dvx**2 + dvy**2
+        if dv_squared < 1e-10:
+            # 相对速度为零，船舶保持恒定距离
+            current_distance = math.sqrt(dx**2 + dy**2)
+            dcpa_degrees = current_distance
+            tcpa_hours = -1.0  # 负值表示不会相遇
+        else:
+            # TCPA 计算（小时）
+            tcpa_hours = -(dx * dvx + dy * dvy) / dv_squared
+            
+            # DCPA 计算（度）
+            if tcpa_hours < 0:
+                # 已经过了最近点，DCPA 就是当前距离
+                dcpa_degrees = math.sqrt(dx**2 + dy**2)
+            else:
+                # 计算在 TCPA 时刻的距离
+                dx_at_tcpa = dx + dvx * tcpa_hours
+                dy_at_tcpa = dy + dvy * tcpa_hours
+                dcpa_degrees = math.sqrt(dx_at_tcpa**2 + dy_at_tcpa**2)
+        
+        # 转换为海里和分钟
+        dcpa_nautical_miles = dcpa_degrees / self.NAUTICAL_MILE_TO_DEGREE
+        tcpa_minutes = tcpa_hours * 60.0
+        
+        return dcpa_nautical_miles, tcpa_minutes
