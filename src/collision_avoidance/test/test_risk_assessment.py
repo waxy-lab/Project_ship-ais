@@ -21,9 +21,12 @@ from collision_avoidance.risk_assessment import (
     calculate_relative_bearing,
     calculate_bearing_risk,
     assess_collision_risk,
+    determine_risk_level,
     RiskLevel,
     SAFE_DISTANCE,
-    SAFE_TIME
+    SAFE_TIME,
+    RISK_THRESHOLD_WARNING,
+    RISK_THRESHOLD_DANGER
 )
 from test_framework.strategies import ship_state_strategy
 
@@ -1218,5 +1221,770 @@ class TestAssessCollisionRisk:
         assert risk.speed_ratio >= 0
 
 
+# ============================================================================
+# CRI 属性测试 (Property-Based Tests)
+# ============================================================================
+
+class TestCRIProperties:
+    """CRI（碰撞风险指数）计算的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证CRI计算的通用正确性
+    """
+    
+    @given(
+        dcpa_base=st.floats(min_value=0.5, max_value=5.0, allow_nan=False, allow_infinity=False),
+        tcpa_base=st.floats(min_value=5.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.5, max_value=2.0, allow_nan=False, allow_infinity=False),
+        reduction_factor=st.floats(min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_monotonicity_dcpa(self, dcpa_base, tcpa_base, bearing, speed_ratio, reduction_factor):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于任意两艘船舶状态，当DCPA减小时，计算出的CRI值应增加（风险上升）
+        
+        这个属性验证了 CRI 计算的单调性，即：
+        - 当 DCPA 减小时，CRI 应该增加
+        - 这反映了距离越近，碰撞风险越高的基本原则
+        
+        测试策略：
+        1. 生成一个基准DCPA值
+        2. 计算减小后的DCPA值（乘以reduction_factor）
+        3. 验证减小DCPA后的CRI值大于基准CRI值
+        """
+        # 过滤掉可能导致数值不稳定的极端情况
+        assume(dcpa_base > 0.1)
+        assume(tcpa_base > 1.0)
+        
+        # 计算基准CRI
+        cri_base = calculate_cri(dcpa_base, tcpa_base, bearing, speed_ratio)
+        
+        # 减小DCPA（距离更近）
+        dcpa_reduced = dcpa_base * reduction_factor
+        
+        # 计算减小DCPA后的CRI
+        cri_reduced = calculate_cri(dcpa_reduced, tcpa_base, bearing, speed_ratio)
+        
+        # 验证单调性：DCPA减小时，CRI应该增加
+        assert cri_reduced > cri_base, \
+            f"DCPA减小时CRI应增加: dcpa_base={dcpa_base:.3f}, dcpa_reduced={dcpa_reduced:.3f}, " \
+            f"cri_base={cri_base:.3f}, cri_reduced={cri_reduced:.3f}"
+        
+        # 验证CRI值在有效范围内
+        assert 0.0 <= cri_base <= 1.0, f"基准CRI应在0-1范围内: {cri_base}"
+        assert 0.0 <= cri_reduced <= 1.0, f"减小DCPA后的CRI应在0-1范围内: {cri_reduced}"
+    
+    @given(
+        dcpa_base=st.floats(min_value=0.5, max_value=5.0, allow_nan=False, allow_infinity=False),
+        tcpa_base=st.floats(min_value=5.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.5, max_value=2.0, allow_nan=False, allow_infinity=False),
+        reduction_factor=st.floats(min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_monotonicity_tcpa(self, dcpa_base, tcpa_base, bearing, speed_ratio, reduction_factor):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于任意两艘船舶状态，当TCPA减小时，计算出的CRI值应增加（风险上升）
+        
+        这个属性验证了 CRI 计算的单调性，即：
+        - 当 TCPA 减小时，CRI 应该增加
+        - 这反映了时间越短，碰撞风险越高的基本原则
+        
+        测试策略：
+        1. 生成一个基准TCPA值
+        2. 计算减小后的TCPA值（乘以reduction_factor）
+        3. 验证减小TCPA后的CRI值大于基准CRI值
+        """
+        # 过滤掉可能导致数值不稳定的极端情况
+        assume(dcpa_base > 0.1)
+        assume(tcpa_base > 1.0)
+        
+        # 计算基准CRI
+        cri_base = calculate_cri(dcpa_base, tcpa_base, bearing, speed_ratio)
+        
+        # 减小TCPA（时间更短）
+        tcpa_reduced = tcpa_base * reduction_factor
+        
+        # 计算减小TCPA后的CRI
+        cri_reduced = calculate_cri(dcpa_base, tcpa_reduced, bearing, speed_ratio)
+        
+        # 验证单调性：TCPA减小时，CRI应该增加
+        assert cri_reduced > cri_base, \
+            f"TCPA减小时CRI应增加: tcpa_base={tcpa_base:.3f}, tcpa_reduced={tcpa_reduced:.3f}, " \
+            f"cri_base={cri_base:.3f}, cri_reduced={cri_reduced:.3f}"
+        
+        # 验证CRI值在有效范围内
+        assert 0.0 <= cri_base <= 1.0, f"基准CRI应在0-1范围内: {cri_base}"
+        assert 0.0 <= cri_reduced <= 1.0, f"减小TCPA后的CRI应在0-1范围内: {cri_reduced}"
+    
+    @given(
+        dcpa_base=st.floats(min_value=0.5, max_value=5.0, allow_nan=False, allow_infinity=False),
+        tcpa_base=st.floats(min_value=5.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.5, max_value=2.0, allow_nan=False, allow_infinity=False),
+        dcpa_reduction=st.floats(min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False),
+        tcpa_reduction=st.floats(min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_monotonicity_both(self, dcpa_base, tcpa_base, bearing, speed_ratio, 
+                                           dcpa_reduction, tcpa_reduction):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于任意两艘船舶状态，当DCPA和TCPA同时减小时，CRI值应显著增加
+        
+        这个属性验证了 CRI 计算的复合单调性，即：
+        - 当 DCPA 和 TCPA 同时减小时，CRI 应该增加更多
+        - 这反映了距离和时间双重压力下，碰撞风险急剧上升
+        
+        测试策略：
+        1. 生成基准DCPA和TCPA值
+        2. 同时减小DCPA和TCPA
+        3. 验证CRI值显著增加
+        """
+        # 过滤掉可能导致数值不稳定的极端情况
+        assume(dcpa_base > 0.1)
+        assume(tcpa_base > 1.0)
+        
+        # 计算基准CRI
+        cri_base = calculate_cri(dcpa_base, tcpa_base, bearing, speed_ratio)
+        
+        # 同时减小DCPA和TCPA
+        dcpa_reduced = dcpa_base * dcpa_reduction
+        tcpa_reduced = tcpa_base * tcpa_reduction
+        
+        # 计算减小后的CRI
+        cri_reduced = calculate_cri(dcpa_reduced, tcpa_reduced, bearing, speed_ratio)
+        
+        # 验证单调性：DCPA和TCPA同时减小时，CRI应该增加
+        assert cri_reduced > cri_base, \
+            f"DCPA和TCPA同时减小时CRI应增加: " \
+            f"dcpa: {dcpa_base:.3f} -> {dcpa_reduced:.3f}, " \
+            f"tcpa: {tcpa_base:.3f} -> {tcpa_reduced:.3f}, " \
+            f"cri: {cri_base:.3f} -> {cri_reduced:.3f}"
+        
+        # 验证CRI值在有效范围内
+        assert 0.0 <= cri_base <= 1.0, f"基准CRI应在0-1范围内: {cri_base}"
+        assert 0.0 <= cri_reduced <= 1.0, f"减小后的CRI应在0-1范围内: {cri_reduced}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_range(self, dcpa, tcpa, bearing, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于任意有效的输入参数，CRI值应始终在[0, 1]范围内
+        
+        这个属性验证了 CRI 计算的边界约束，确保：
+        - CRI 值永远不会超出 [0, 1] 范围
+        - 这是风险指数的基本要求
+        """
+        # 计算CRI
+        cri = calculate_cri(dcpa, tcpa, bearing, speed_ratio)
+        
+        # 验证CRI在有效范围内
+        assert 0.0 <= cri <= 1.0, \
+            f"CRI应在0-1范围内: cri={cri:.3f}, " \
+            f"dcpa={dcpa:.3f}, tcpa={tcpa:.3f}, bearing={bearing:.1f}, speed_ratio={speed_ratio:.2f}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=5.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.5, max_value=2.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_bearing_symmetry(self, dcpa, tcpa, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于相同的DCPA、TCPA和速度比，左右对称的方位应产生相同的CRI值
+        
+        这个属性验证了方位因子的对称性：
+        - bearing = 45° 和 bearing = -45° 应产生相同的CRI
+        - 这反映了左右方位的风险是对称的
+        """
+        bearing_positive = 45.0
+        bearing_negative = -45.0
+        
+        # 计算正方位的CRI
+        cri_positive = calculate_cri(dcpa, tcpa, bearing_positive, speed_ratio)
+        
+        # 计算负方位的CRI
+        cri_negative = calculate_cri(dcpa, tcpa, bearing_negative, speed_ratio)
+        
+        # 验证对称性：左右方位的CRI应该相等
+        assert abs(cri_positive - cri_negative) < 0.001, \
+            f"左右对称方位的CRI应相等: " \
+            f"cri(+45°)={cri_positive:.4f}, cri(-45°)={cri_negative:.4f}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=5.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.5, max_value=2.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_cri_bearing_front_higher_than_rear(self, dcpa, tcpa, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 10: CRI值的单调性
+        
+        **Validates: Requirements 4.2**
+        
+        属性：对于相同的DCPA、TCPA和速度比，正前方的CRI应高于正后方
+        
+        这个属性验证了方位因子的合理性：
+        - 正前方（0°）的风险应高于正后方（180°）
+        - 这反映了前方目标比后方目标更危险
+        """
+        bearing_front = 0.0
+        bearing_rear = 180.0
+        
+        # 计算正前方的CRI
+        cri_front = calculate_cri(dcpa, tcpa, bearing_front, speed_ratio)
+        
+        # 计算正后方的CRI
+        cri_rear = calculate_cri(dcpa, tcpa, bearing_rear, speed_ratio)
+        
+        # 验证：正前方的CRI应高于正后方
+        assert cri_front > cri_rear, \
+            f"正前方CRI应高于正后方: " \
+            f"cri_front={cri_front:.4f}, cri_rear={cri_rear:.4f}"
+
+
+# ============================================================================
+# 风险阈值判定测试
+# ============================================================================
+
+class TestRiskLevelDetermination:
+    """风险等级判定函数测试
+    
+    测试 determine_risk_level() 函数的正确性
+    Requirements: 4.3, 4.4
+    """
+    
+    def test_safe_level_low_cri(self):
+        """测试安全等级：CRI远低于预警阈值"""
+        cri = 0.2  # 远低于0.5
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.SAFE, \
+            f"CRI={cri}应判定为SAFE，实际为{risk_level}"
+    
+    def test_safe_level_at_boundary(self):
+        """测试安全等级：CRI刚好低于预警阈值"""
+        cri = 0.49  # 刚好低于0.5
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.SAFE, \
+            f"CRI={cri}应判定为SAFE，实际为{risk_level}"
+    
+    def test_warning_level_at_lower_boundary(self):
+        """测试预警等级：CRI刚好等于预警阈值"""
+        cri = 0.5  # 等于预警阈值
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.WARNING, \
+            f"CRI={cri}应判定为WARNING，实际为{risk_level}"
+    
+    def test_warning_level_middle(self):
+        """测试预警等级：CRI在预警和危险阈值之间"""
+        cri = 0.6  # 在0.5和0.7之间
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.WARNING, \
+            f"CRI={cri}应判定为WARNING，实际为{risk_level}"
+    
+    def test_warning_level_at_upper_boundary(self):
+        """测试预警等级：CRI刚好低于危险阈值"""
+        cri = 0.69  # 刚好低于0.7
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.WARNING, \
+            f"CRI={cri}应判定为WARNING，实际为{risk_level}"
+    
+    def test_danger_level_at_boundary(self):
+        """测试危险等级：CRI刚好等于危险阈值"""
+        cri = 0.7  # 等于危险阈值
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.DANGER, \
+            f"CRI={cri}应判定为DANGER，实际为{risk_level}"
+    
+    def test_danger_level_high_cri(self):
+        """测试危险等级：CRI远高于危险阈值"""
+        cri = 0.9  # 远高于0.7
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.DANGER, \
+            f"CRI={cri}应判定为DANGER，实际为{risk_level}"
+    
+    def test_danger_level_maximum_cri(self):
+        """测试危险等级：CRI为最大值1.0"""
+        cri = 1.0  # 最大值
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.DANGER, \
+            f"CRI={cri}应判定为DANGER，实际为{risk_level}"
+    
+    def test_safe_level_minimum_cri(self):
+        """测试安全等级：CRI为最小值0.0"""
+        cri = 0.0  # 最小值
+        risk_level = determine_risk_level(cri)
+        
+        assert risk_level == RiskLevel.SAFE, \
+            f"CRI={cri}应判定为SAFE，实际为{risk_level}"
+    
+    def test_threshold_consistency(self):
+        """测试阈值的一致性：确保阈值定义正确"""
+        # 验证阈值常量的值
+        assert RISK_THRESHOLD_WARNING == 0.5, \
+            f"预警阈值应为0.5，实际为{RISK_THRESHOLD_WARNING}"
+        assert RISK_THRESHOLD_DANGER == 0.7, \
+            f"危险阈值应为0.7，实际为{RISK_THRESHOLD_DANGER}"
+        
+        # 验证危险阈值大于预警阈值
+        assert RISK_THRESHOLD_DANGER > RISK_THRESHOLD_WARNING, \
+            "危险阈值应大于预警阈值"
+    
+    def test_all_three_levels(self):
+        """测试所有三个风险等级都能被正确判定"""
+        # 测试一系列CRI值，确保覆盖所有三个等级
+        test_cases = [
+            (0.0, RiskLevel.SAFE),
+            (0.3, RiskLevel.SAFE),
+            (0.49, RiskLevel.SAFE),
+            (0.5, RiskLevel.WARNING),
+            (0.6, RiskLevel.WARNING),
+            (0.69, RiskLevel.WARNING),
+            (0.7, RiskLevel.DANGER),
+            (0.85, RiskLevel.DANGER),
+            (1.0, RiskLevel.DANGER),
+        ]
+        
+        for cri, expected_level in test_cases:
+            actual_level = determine_risk_level(cri)
+            assert actual_level == expected_level, \
+                f"CRI={cri}应判定为{expected_level}，实际为{actual_level}"
+
+
+class TestRiskAssessmentIntegration:
+    """风险评估集成测试
+    
+    测试 assess_collision_risk() 函数是否正确集成了风险等级判定
+    Requirements: 4.1, 4.2, 4.3, 4.4
+    """
+    
+    def test_high_risk_assessment(self):
+        """测试高风险场景的完整评估"""
+        # 高风险场景：近距离、短时间、正前方
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=90.0,
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=0.01,  # 约0.6海里
+            heading=270.0,
+            sog=12.0
+        )
+        
+        risk = assess_collision_risk(own_ship, target_ship)
+        
+        # 验证CRI值较高
+        assert risk.cri > 0.7, f"高风险场景CRI应大于0.7，实际为{risk.cri}"
+        
+        # 验证风险等级为DANGER
+        assert risk.risk_level == RiskLevel.DANGER, \
+            f"高风险场景应判定为DANGER，实际为{risk.risk_level}"
+    
+    def test_medium_risk_assessment(self):
+        """测试中等风险场景的完整评估"""
+        # 中等风险场景：中等距离、中等时间
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=90.0,
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.02,  # 北侧偏移，避免完全对遇
+            longitude=0.08,  # 约4.8海里
+            heading=270.0,
+            sog=10.0
+        )
+        
+        risk = assess_collision_risk(own_ship, target_ship)
+        
+        # 验证CRI值在预警范围
+        assert 0.5 <= risk.cri < 0.7, \
+            f"中等风险场景CRI应在0.5-0.7之间，实际为{risk.cri}"
+        
+        # 验证风险等级为WARNING
+        assert risk.risk_level == RiskLevel.WARNING, \
+            f"中等风险场景应判定为WARNING，实际为{risk.risk_level}"
+    
+    def test_low_risk_assessment(self):
+        """测试低风险场景的完整评估"""
+        # 低风险场景：远距离、长时间
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=90.0,
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.1,  # 北侧偏移，避免对遇
+            longitude=0.3,  # 约18海里
+            heading=270.0,
+            sog=8.0
+        )
+        
+        risk = assess_collision_risk(own_ship, target_ship)
+        
+        # 验证CRI值较低
+        assert risk.cri < 0.5, f"低风险场景CRI应小于0.5，实际为{risk.cri}"
+        
+        # 验证风险等级为SAFE
+        assert risk.risk_level == RiskLevel.SAFE, \
+            f"低风险场景应判定为SAFE，实际为{risk.risk_level}"
+    
+    def test_risk_level_consistency_with_cri(self):
+        """测试风险等级与CRI值的一致性"""
+        # 创建多个场景，验证风险等级与CRI值的对应关系
+        test_scenarios = [
+            # (distance_deg, lat_offset, expected_min_cri, expected_max_cri, expected_level)
+            (0.01, 0.0, 0.7, 1.0, RiskLevel.DANGER),      # 很近，对遇
+            (0.08, 0.02, 0.5, 0.7, RiskLevel.WARNING),    # 中等，有偏移
+            (0.3, 0.1, 0.0, 0.5, RiskLevel.SAFE),         # 较远，有偏移
+        ]
+        
+        for distance_deg, lat_offset, min_cri, max_cri, expected_level in test_scenarios:
+            own_ship = ShipState(
+                mmsi=123456789,
+                latitude=0.0,
+                longitude=0.0,
+                heading=90.0,
+                sog=10.0
+            )
+            target_ship = ShipState(
+                mmsi=987654321,
+                latitude=lat_offset,
+                longitude=distance_deg,
+                heading=270.0,
+                sog=10.0
+            )
+            
+            risk = assess_collision_risk(own_ship, target_ship)
+            
+            # 验证CRI在预期范围内
+            assert min_cri <= risk.cri <= max_cri, \
+                f"距离{distance_deg}度(偏移{lat_offset})时，CRI应在{min_cri}-{max_cri}之间，实际为{risk.cri}"
+            
+            # 验证风险等级正确
+            assert risk.risk_level == expected_level, \
+                f"距离{distance_deg}度(偏移{lat_offset})时，风险等级应为{expected_level}，实际为{risk.risk_level}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+# ============================================================================
+# 风险阈值触发属性测试 (Property-Based Tests)
+# ============================================================================
+
+class TestRiskThresholdProperties:
+    """风险阈值触发的属性测试
+    
+    使用 Hypothesis 进行基于属性的测试，验证风险阈值触发的一致性
+    Requirements: 4.3, 4.4
+    """
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_warning_threshold_consistency(self, dcpa, tcpa, bearing, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：对于任意计算出的CRI值，当CRI超过预警阈值时，系统应发出预警信号
+        
+        这个属性验证了预警阈值触发的一致性：
+        - 当 CRI >= RISK_THRESHOLD_WARNING (0.5) 时，风险等级应为 WARNING 或 DANGER
+        - 当 CRI < RISK_THRESHOLD_WARNING (0.5) 时，风险等级应为 SAFE
+        
+        测试策略：
+        1. 使用随机参数计算CRI值
+        2. 根据CRI值判定风险等级
+        3. 验证风险等级与CRI阈值的对应关系
+        """
+        # 计算CRI
+        cri = calculate_cri(dcpa, tcpa, bearing, speed_ratio)
+        
+        # 判定风险等级
+        risk_level = determine_risk_level(cri)
+        
+        # 验证预警阈值触发的一致性
+        if cri >= RISK_THRESHOLD_WARNING:
+            # CRI超过预警阈值，应触发预警或危险
+            assert risk_level in [RiskLevel.WARNING, RiskLevel.DANGER], \
+                f"CRI={cri:.4f} >= 预警阈值{RISK_THRESHOLD_WARNING}，应触发预警或危险，实际为{risk_level}"
+        else:
+            # CRI低于预警阈值，应为安全
+            assert risk_level == RiskLevel.SAFE, \
+                f"CRI={cri:.4f} < 预警阈值{RISK_THRESHOLD_WARNING}，应为安全，实际为{risk_level}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_danger_threshold_consistency(self, dcpa, tcpa, bearing, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：对于任意计算出的CRI值，当CRI超过危险阈值时，系统应触发自动避让决策
+        
+        这个属性验证了危险阈值触发的一致性：
+        - 当 CRI >= RISK_THRESHOLD_DANGER (0.7) 时，风险等级应为 DANGER
+        - 当 CRI < RISK_THRESHOLD_DANGER (0.7) 时，风险等级应为 SAFE 或 WARNING
+        
+        测试策略：
+        1. 使用随机参数计算CRI值
+        2. 根据CRI值判定风险等级
+        3. 验证风险等级与CRI阈值的对应关系
+        """
+        # 计算CRI
+        cri = calculate_cri(dcpa, tcpa, bearing, speed_ratio)
+        
+        # 判定风险等级
+        risk_level = determine_risk_level(cri)
+        
+        # 验证危险阈值触发的一致性
+        if cri >= RISK_THRESHOLD_DANGER:
+            # CRI超过危险阈值，应触发危险（自动避让）
+            assert risk_level == RiskLevel.DANGER, \
+                f"CRI={cri:.4f} >= 危险阈值{RISK_THRESHOLD_DANGER}，应触发危险（自动避让），实际为{risk_level}"
+        else:
+            # CRI低于危险阈值，应为安全或预警
+            assert risk_level in [RiskLevel.SAFE, RiskLevel.WARNING], \
+                f"CRI={cri:.4f} < 危险阈值{RISK_THRESHOLD_DANGER}，应为安全或预警，实际为{risk_level}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_threshold_ordering(self, dcpa, tcpa, bearing, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：风险等级应遵循严格的顺序关系
+        
+        这个属性验证了风险等级的顺序一致性：
+        - SAFE < WARNING < DANGER
+        - 不应出现跳级或逆序的情况
+        
+        测试策略：
+        1. 使用随机参数计算CRI值
+        2. 根据CRI值判定风险等级
+        3. 验证风险等级与CRI值的单调对应关系
+        """
+        # 计算CRI
+        cri = calculate_cri(dcpa, tcpa, bearing, speed_ratio)
+        
+        # 判定风险等级
+        risk_level = determine_risk_level(cri)
+        
+        # 验证风险等级与CRI值的对应关系
+        if cri < RISK_THRESHOLD_WARNING:
+            # CRI < 0.5，应为SAFE
+            assert risk_level == RiskLevel.SAFE, \
+                f"CRI={cri:.4f} < {RISK_THRESHOLD_WARNING}，应为SAFE，实际为{risk_level}"
+        elif cri < RISK_THRESHOLD_DANGER:
+            # 0.5 <= CRI < 0.7，应为WARNING
+            assert risk_level == RiskLevel.WARNING, \
+                f"{RISK_THRESHOLD_WARNING} <= CRI={cri:.4f} < {RISK_THRESHOLD_DANGER}，应为WARNING，实际为{risk_level}"
+        else:
+            # CRI >= 0.7，应为DANGER
+            assert risk_level == RiskLevel.DANGER, \
+                f"CRI={cri:.4f} >= {RISK_THRESHOLD_DANGER}，应为DANGER，实际为{risk_level}"
+    
+    @given(
+        ship1_data=ship_state_strategy(
+            lat_range=(-60.0, 60.0),
+            lon_range=(-150.0, 150.0),
+            speed_range=(1.0, 25.0)
+        ),
+        ship2_data=ship_state_strategy(
+            lat_range=(-60.0, 60.0),
+            lon_range=(-150.0, 150.0),
+            speed_range=(1.0, 25.0)
+        )
+    )
+    def test_property_integrated_threshold_consistency(self, ship1_data, ship2_data):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：在完整的风险评估流程中，风险阈值触发应保持一致性
+        
+        这个属性验证了从船舶状态到风险等级的完整流程：
+        - assess_collision_risk() 返回的风险等级应与其CRI值一致
+        - 风险等级应正确反映CRI阈值的触发情况
+        
+        测试策略：
+        1. 使用随机船舶状态进行完整的风险评估
+        2. 验证返回的风险等级与CRI值的一致性
+        3. 确保阈值触发逻辑在集成场景中正确工作
+        """
+        # 过滤掉位置过于接近的船舶（避免数值不稳定）
+        lat_diff = abs(ship1_data['latitude'] - ship2_data['latitude'])
+        lon_diff = abs(ship1_data['longitude'] - ship2_data['longitude'])
+        assume(lat_diff > 0.01 or lon_diff > 0.01)
+        
+        # 确保两艘船的 MMSI 不同
+        if ship1_data['mmsi'] == ship2_data['mmsi']:
+            if ship2_data['mmsi'] < 999999999:
+                ship2_data['mmsi'] = ship2_data['mmsi'] + 1
+            else:
+                ship2_data['mmsi'] = 100000000
+        
+        # 创建船舶状态对象
+        ship1 = ShipState(**ship1_data)
+        ship2 = ShipState(**ship2_data)
+        
+        # 进行完整的风险评估
+        risk = assess_collision_risk(ship1, ship2)
+        
+        # 验证风险等级与CRI值的一致性
+        if risk.cri >= RISK_THRESHOLD_DANGER:
+            assert risk.risk_level == RiskLevel.DANGER, \
+                f"CRI={risk.cri:.4f} >= 危险阈值{RISK_THRESHOLD_DANGER}，风险等级应为DANGER，实际为{risk.risk_level}"
+        elif risk.cri >= RISK_THRESHOLD_WARNING:
+            assert risk.risk_level == RiskLevel.WARNING, \
+                f"{RISK_THRESHOLD_WARNING} <= CRI={risk.cri:.4f} < {RISK_THRESHOLD_DANGER}，风险等级应为WARNING，实际为{risk.risk_level}"
+        else:
+            assert risk.risk_level == RiskLevel.SAFE, \
+                f"CRI={risk.cri:.4f} < 预警阈值{RISK_THRESHOLD_WARNING}，风险等级应为SAFE，实际为{risk.risk_level}"
+        
+        # 验证CRI值在有效范围内
+        assert 0.0 <= risk.cri <= 1.0, \
+            f"CRI应在0-1范围内，实际为{risk.cri}"
+    
+    @given(
+        cri_near_warning=st.floats(min_value=0.48, max_value=0.52, allow_nan=False, allow_infinity=False),
+        cri_near_danger=st.floats(min_value=0.68, max_value=0.72, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_threshold_boundary_precision(self, cri_near_warning, cri_near_danger):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：在阈值边界附近，风险等级判定应保持精确性
+        
+        这个属性验证了阈值边界的精确判定：
+        - 在预警阈值（0.5）附近，判定应精确
+        - 在危险阈值（0.7）附近，判定应精确
+        - 不应出现边界模糊或判定错误
+        
+        测试策略：
+        1. 生成接近阈值的CRI值
+        2. 验证风险等级判定的精确性
+        3. 确保边界情况处理正确
+        """
+        # 测试预警阈值边界
+        risk_level_warning = determine_risk_level(cri_near_warning)
+        
+        if cri_near_warning >= RISK_THRESHOLD_WARNING:
+            assert risk_level_warning in [RiskLevel.WARNING, RiskLevel.DANGER], \
+                f"CRI={cri_near_warning:.4f} >= 预警阈值{RISK_THRESHOLD_WARNING}，应触发预警或危险，实际为{risk_level_warning}"
+        else:
+            assert risk_level_warning == RiskLevel.SAFE, \
+                f"CRI={cri_near_warning:.4f} < 预警阈值{RISK_THRESHOLD_WARNING}，应为安全，实际为{risk_level_warning}"
+        
+        # 测试危险阈值边界
+        risk_level_danger = determine_risk_level(cri_near_danger)
+        
+        if cri_near_danger >= RISK_THRESHOLD_DANGER:
+            assert risk_level_danger == RiskLevel.DANGER, \
+                f"CRI={cri_near_danger:.4f} >= 危险阈值{RISK_THRESHOLD_DANGER}，应触发危险，实际为{risk_level_danger}"
+        else:
+            assert risk_level_danger in [RiskLevel.SAFE, RiskLevel.WARNING], \
+                f"CRI={cri_near_danger:.4f} < 危险阈值{RISK_THRESHOLD_DANGER}，应为安全或预警，实际为{risk_level_danger}"
+    
+    @given(
+        dcpa=st.floats(min_value=0.1, max_value=10.0, allow_nan=False, allow_infinity=False),
+        tcpa=st.floats(min_value=1.0, max_value=60.0, allow_nan=False, allow_infinity=False),
+        bearing=st.floats(min_value=-180.0, max_value=180.0, allow_nan=False, allow_infinity=False),
+        speed_ratio=st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_no_threshold_skip(self, dcpa, tcpa, bearing, speed_ratio):
+        """
+        Feature: maritime-collision-avoidance, Property 11: 风险阈值触发的一致性
+        
+        **Validates: Requirements 4.3, 4.4**
+        
+        属性：风险等级不应跳过中间级别
+        
+        这个属性验证了风险等级的连续性：
+        - 不应从SAFE直接跳到DANGER（应经过WARNING）
+        - 风险等级应遵循 SAFE -> WARNING -> DANGER 的顺序
+        
+        测试策略：
+        1. 计算CRI值并判定风险等级
+        2. 验证风险等级与CRI值的对应关系
+        3. 确保不存在跳级现象
+        """
+        # 计算CRI
+        cri = calculate_cri(dcpa, tcpa, bearing, speed_ratio)
+        
+        # 判定风险等级
+        risk_level = determine_risk_level(cri)
+        
+        # 验证风险等级的连续性
+        if risk_level == RiskLevel.SAFE:
+            # SAFE级别，CRI应小于预警阈值
+            assert cri < RISK_THRESHOLD_WARNING, \
+                f"风险等级为SAFE时，CRI={cri:.4f}应小于预警阈值{RISK_THRESHOLD_WARNING}"
+        elif risk_level == RiskLevel.WARNING:
+            # WARNING级别，CRI应在预警和危险阈值之间
+            assert RISK_THRESHOLD_WARNING <= cri < RISK_THRESHOLD_DANGER, \
+                f"风险等级为WARNING时，CRI={cri:.4f}应在{RISK_THRESHOLD_WARNING}和{RISK_THRESHOLD_DANGER}之间"
+        elif risk_level == RiskLevel.DANGER:
+            # DANGER级别，CRI应大于等于危险阈值
+            assert cri >= RISK_THRESHOLD_DANGER, \
+                f"风险等级为DANGER时，CRI={cri:.4f}应大于等于危险阈值{RISK_THRESHOLD_DANGER}"

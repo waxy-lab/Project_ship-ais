@@ -107,18 +107,18 @@
     - 综合考虑距离、时间、方位、速度比等因素
     - _Requirements: 4.2_
 
-  - [ ]* 6.6 编写CRI计算的属性测试
+  - [x] 6.6 编写CRI计算的属性测试
     - **Property 10: CRI值的单调性**
     - **Validates: Requirements 4.2**
     - 验证DCPA/TCPA减小时CRI增加
     - _Requirements: 4.2_
 
-  - [ ] 6.7 实现风险阈值判定逻辑
+  - [x] 6.7 实现风险阈值判定逻辑
     - 实现预警阈值和危险阈值判定
     - 定义 RiskLevel 枚举和判定函数
     - _Requirements: 4.3, 4.4_
 
-  - [ ]* 6.8 编写风险阈值触发的属性测试
+  - [x] 6.8 编写风险阈值触发的属性测试
     - **Property 11: 风险阈值触发的一致性**
     - **Validates: Requirements 4.3, 4.4**
     - _Requirements: 4.3, 4.4_
