@@ -129,7 +129,7 @@
     - 定义 EncounterType 枚举和相关数据结构
     - _Requirements: 3.1-3.6_
 
-  - [ ] 7.2 实现相遇类型判定函数
+  - [x] 7.2 实现相遇类型判定函数
     - 实现 determine_encounter_type() 函数
     - 判断对遇、交叉、追越等类型
     - _Requirements: 3.1-3.4_

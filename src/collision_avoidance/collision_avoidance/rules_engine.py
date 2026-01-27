@@ -381,12 +381,31 @@ def determine_encounter_type(own_ship, target_ship) -> EncounterType:
         相遇类型
         
     Requirements: 3.1-3.4
-    
-    Note:
-        此函数将在任务7.2中实现
     """
-    # TODO: 在任务7.2中实现
-    raise NotImplementedError("此函数将在任务7.2中实现")
+    # 计算相对方位和航向差
+    relative_bearing = calculate_relative_bearing(own_ship, target_ship)
+    heading_diff = calculate_heading_difference(own_ship.heading, target_ship.heading)
+    
+    # 1. 追越判定（优先级最高）
+    # 追越：目标船在本船后方22.5度扇形区域内（即相对方位大于112.5度或小于-112.5度）
+    # 且本船速度大于目标船速度
+    if (abs(relative_bearing) > RELATIVE_BEARING_OVERTAKING and 
+        own_ship.speed > target_ship.speed):
+        return EncounterType.OVERTAKING
+    
+    # 2. 对遇判定
+    # 对遇：航向差在170-190度之间，且相对方位在-10到10度之间
+    if (HEADING_DIFF_HEAD_ON_MIN <= heading_diff <= HEADING_DIFF_HEAD_ON_MAX and
+        RELATIVE_BEARING_HEAD_ON_MIN <= relative_bearing <= RELATIVE_BEARING_HEAD_ON_MAX):
+        return EncounterType.HEAD_ON
+    
+    # 3. 交叉判定
+    # 交叉：相对方位在5-112.5度或-112.5到-5度之间
+    if (RELATIVE_BEARING_CROSSING_MIN <= abs(relative_bearing) <= RELATIVE_BEARING_CROSSING_MAX):
+        return EncounterType.CROSSING
+    
+    # 4. 无相遇风险
+    return EncounterType.NONE
 
 
 def determine_vessel_roles(encounter_type: EncounterType, 
@@ -395,6 +414,11 @@ def determine_vessel_roles(encounter_type: EncounterType,
     """确定船舶角色（让路船/直航船）
     
     根据相遇类型和相对位置确定本船和目标船的角色。
+    
+    规则：
+    - 对遇：双方都是让路船
+    - 交叉：右舷有他船的船舶为让路船
+    - 追越：追越船为让路船
     
     Args:
         encounter_type: 相遇类型
@@ -405,12 +429,35 @@ def determine_vessel_roles(encounter_type: EncounterType,
         (本船角色, 目标船角色)
         
     Requirements: 3.2, 3.3
-    
-    Note:
-        此函数将在任务7.2中实现
     """
-    # TODO: 在任务7.2中实现
-    raise NotImplementedError("此函数将在任务7.2中实现")
+    if encounter_type == EncounterType.NONE:
+        return (VesselRole.UNDEFINED, VesselRole.UNDEFINED)
+    
+    # 对遇：双方都需要让路
+    if encounter_type == EncounterType.HEAD_ON:
+        return (VesselRole.BOTH_GIVE_WAY, VesselRole.BOTH_GIVE_WAY)
+    
+    # 交叉：判断目标船是否在右舷
+    if encounter_type == EncounterType.CROSSING:
+        relative_bearing = calculate_relative_bearing(own_ship, target_ship)
+        if is_crossing_from_starboard(relative_bearing):
+            # 目标船在右舷，本船为让路船
+            return (VesselRole.GIVE_WAY, VesselRole.STAND_ON)
+        else:
+            # 目标船在左舷，本船为直航船
+            return (VesselRole.STAND_ON, VesselRole.GIVE_WAY)
+    
+    # 追越：追越船为让路船
+    if encounter_type == EncounterType.OVERTAKING:
+        # 判断谁是追越船（速度更快的船）
+        if own_ship.speed > target_ship.speed:
+            # 本船追越目标船，本船为让路船
+            return (VesselRole.GIVE_WAY, VesselRole.STAND_ON)
+        else:
+            # 目标船追越本船，本船为直航船
+            return (VesselRole.STAND_ON, VesselRole.GIVE_WAY)
+    
+    return (VesselRole.UNDEFINED, VesselRole.UNDEFINED)
 
 
 def apply_colregs_rule(encounter_type: EncounterType, 
@@ -448,12 +495,45 @@ def analyze_encounter_situation(own_ship, target_ship) -> EncounterSituation:
         
     Returns:
         相遇态势信息
-        
-    Note:
-        此函数将在任务7.2中实现
     """
-    # TODO: 在任务7.2中实现
-    raise NotImplementedError("此函数将在任务7.2中实现")
+    # 计算相对方位和航向差
+    relative_bearing = calculate_relative_bearing(own_ship, target_ship)
+    heading_diff = calculate_heading_difference(own_ship.heading, target_ship.heading)
+    
+    # 计算距离（简化的欧几里得距离，转换为海里）
+    lat_diff = target_ship.latitude - own_ship.latitude
+    lon_diff = target_ship.longitude - own_ship.longitude
+    # 考虑纬度修正
+    avg_latitude = (own_ship.latitude + target_ship.latitude) / 2.0
+    lon_diff_corrected = lon_diff * math.cos(math.radians(avg_latitude))
+    # 1度约等于60海里
+    distance = math.sqrt(lat_diff**2 + lon_diff_corrected**2) * 60.0
+    
+    # 判定相遇类型
+    encounter_type = determine_encounter_type(own_ship, target_ship)
+    
+    # 确定船舶角色
+    own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
+    
+    # 判断是否为追越态势
+    is_overtaking = (encounter_type == EncounterType.OVERTAKING)
+    
+    # 判断是否从右舷交叉
+    is_crossing_from_starboard_flag = (
+        encounter_type == EncounterType.CROSSING and 
+        is_crossing_from_starboard(relative_bearing)
+    )
+    
+    return EncounterSituation(
+        encounter_type=encounter_type,
+        own_ship_role=own_role,
+        target_ship_role=target_role,
+        relative_bearing=relative_bearing,
+        heading_difference=heading_diff,
+        distance=distance,
+        is_overtaking=is_overtaking,
+        is_crossing_from_starboard=is_crossing_from_starboard_flag
+    )
 
 
 def get_applicable_rule(encounter_type: EncounterType) -> COLREGSRule:
