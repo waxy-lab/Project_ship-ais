@@ -124,7 +124,7 @@
     - _Requirements: 4.3, 4.4_
 
 - [ ] 7. 实现COLREGS规则引擎
-  - [ ] 7.1 创建规则引擎模块文件
+  - [x] 7.1 创建规则引擎模块文件
     - 在 collision_avoidance 包中创建 rules_engine.py
     - 定义 EncounterType 枚举和相关数据结构
     - _Requirements: 3.1-3.6_
