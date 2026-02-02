@@ -12,6 +12,9 @@ from hypothesis import given, strategies as st, assume
 from collision_avoidance.rules_engine import (
     EncounterType,
     VesselRole,
+    TurnDirection,
+    ActionType,
+    AvoidanceAction,
     determine_encounter_type,
     determine_vessel_roles,
     analyze_encounter_situation,
@@ -19,6 +22,7 @@ from collision_avoidance.rules_engine import (
     calculate_heading_difference,
     normalize_angle,
     is_crossing_from_starboard,
+    apply_colregs_rule,
 )
 
 # 导入数据模型
@@ -855,6 +859,290 @@ class TestAnalyzeEncounterSituation:
         
         # 距离应该约为60海里
         assert 55 < situation.distance < 65
+
+
+# ============================================================================
+# 测试COLREGS规则应用
+# ============================================================================
+
+class TestApplyCOLREGSRule:
+    """测试COLREGS规则应用函数
+    
+    Requirements: 3.1-3.6
+    """
+    
+    def test_head_on_turn_starboard(self):
+        """测试对遇时向右转向
+        
+        Requirements: 3.1
+        """
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.01,  # 北方
+            longitude=0.0,
+            heading=180.0,  # 南向
+            sog=10.0
+        )
+        
+        action = apply_colregs_rule(EncounterType.HEAD_ON, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.COURSE_CHANGE
+        assert action.turn_direction == TurnDirection.STARBOARD
+        assert action.turn_angle == 15.0
+        assert "Rule 14" in action.reason
+    
+    def test_crossing_give_way_turn_starboard(self):
+        """测试交叉相遇时让路船向右转向
+        
+        Requirements: 3.2
+        """
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=0.01,  # 右舷
+            heading=270.0,  # 西向
+            sog=10.0
+        )
+        
+        action = apply_colregs_rule(EncounterType.CROSSING, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.COURSE_CHANGE
+        assert action.turn_direction == TurnDirection.STARBOARD
+        assert action.turn_angle == 30.0  # 明显避让
+        assert "Rule 15" in action.reason
+        assert "让路船" in action.reason
+    
+    def test_crossing_stand_on_maintain_course(self):
+        """测试交叉相遇时直航船保持航向
+        
+        Requirements: 3.3
+        """
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=-0.01,  # 左舷
+            heading=90.0,  # 东向
+            sog=10.0
+        )
+        
+        action = apply_colregs_rule(EncounterType.CROSSING, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.MAINTAIN
+        assert action.maintain_course == True
+        assert "Rule 17" in action.reason
+        assert "直航船" in action.reason
+    
+    def test_overtaking_give_way_avoidance(self):
+        """测试追越时追越船避让
+        
+        Requirements: 3.4
+        """
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=15.0  # 更快
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=-0.01,  # 后方
+            longitude=0.0,
+            heading=0.0,  # 同向
+            sog=10.0  # 更慢
+        )
+        
+        action = apply_colregs_rule(EncounterType.OVERTAKING, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.COURSE_CHANGE
+        assert action.turn_direction in [TurnDirection.STARBOARD, TurnDirection.PORT]
+        assert action.turn_angle == 20.0
+        assert "Rule 13" in action.reason
+        assert "追越船" in action.reason
+    
+    def test_overtaking_stand_on_maintain_course(self):
+        """测试追越时被追越船保持航向
+        
+        Requirements: 3.4
+        """
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0  # 更慢
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=-0.01,  # 后方
+            longitude=0.0,
+            heading=0.0,  # 同向
+            sog=15.0  # 更快
+        )
+        
+        action = apply_colregs_rule(EncounterType.OVERTAKING, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.MAINTAIN
+        assert action.maintain_course == True
+        assert "Rule 13" in action.reason
+        assert "被追越船" in action.reason
+    
+    def test_overtaking_turn_direction_based_on_bearing(self):
+        """测试追越时根据相对方位选择转向方向"""
+        # 目标船在右后方，应该向右转
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=15.0  # 更快
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=-0.01,  # 后方
+            longitude=0.005,  # 右后方
+            heading=0.0,  # 同向
+            sog=10.0  # 更慢
+        )
+        
+        action = apply_colregs_rule(EncounterType.OVERTAKING, own_ship, target_ship)
+        
+        assert action.turn_direction == TurnDirection.STARBOARD
+        
+        # 目标船在左后方，应该向左转
+        target_ship2 = ShipState(
+            mmsi=987654321,
+            latitude=-0.01,  # 后方
+            longitude=-0.005,  # 左后方
+            heading=0.0,  # 同向
+            sog=10.0  # 更慢
+        )
+        
+        action2 = apply_colregs_rule(EncounterType.OVERTAKING, own_ship, target_ship2)
+        
+        assert action2.turn_direction == TurnDirection.PORT
+    
+    def test_no_encounter_no_action(self):
+        """测试无相遇风险时无需动作"""
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=-0.01,  # 南方
+            longitude=0.0,
+            heading=0.0,  # 北向（背离）
+            sog=10.0
+        )
+        
+        action = apply_colregs_rule(EncounterType.NONE, own_ship, target_ship)
+        
+        assert action.action_type == ActionType.NO_ACTION
+        assert action.no_action == True
+        assert "无相遇风险" in action.reason
+    
+    def test_action_validation(self):
+        """测试避让动作的数据验证"""
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,
+            sog=10.0
+        )
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=0.01,
+            longitude=0.0,
+            heading=180.0,
+            sog=10.0
+        )
+        
+        action = apply_colregs_rule(EncounterType.HEAD_ON, own_ship, target_ship)
+        
+        # 验证动作包含必要的信息
+        assert action.turn_direction is not None
+        assert action.turn_angle is not None
+        assert action.turn_angle > 0
+        assert action.reason != ""
+    
+    def test_different_encounter_scenarios(self):
+        """测试不同相遇场景的规则应用"""
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=90.0,  # 东向
+            sog=10.0
+        )
+        
+        # 场景1：对遇
+        target_ship_head_on = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=0.01,  # 东方
+            heading=270.0,  # 西向
+            sog=10.0
+        )
+        action1 = apply_colregs_rule(EncounterType.HEAD_ON, own_ship, target_ship_head_on)
+        assert action1.action_type == ActionType.COURSE_CHANGE
+        assert action1.turn_direction == TurnDirection.STARBOARD
+        
+        # 场景2：交叉（让路船）- 目标船在右舷
+        own_ship2 = ShipState(
+            mmsi=123456789,
+            latitude=0.0,
+            longitude=0.0,
+            heading=0.0,  # 北向
+            sog=10.0
+        )
+        target_ship_crossing = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=0.01,  # 右舷（东方）
+            heading=270.0,  # 西向
+            sog=10.0
+        )
+        action2 = apply_colregs_rule(EncounterType.CROSSING, own_ship2, target_ship_crossing)
+        assert action2.action_type == ActionType.COURSE_CHANGE
+        assert action2.turn_angle == 30.0
+        
+        # 场景3：追越
+        target_ship_overtaking = ShipState(
+            mmsi=987654321,
+            latitude=0.0,
+            longitude=-0.01,  # 西方（后方）
+            heading=90.0,  # 东向
+            sog=8.0  # 更慢
+        )
+        action3 = apply_colregs_rule(EncounterType.OVERTAKING, own_ship, target_ship_overtaking)
+        assert action3.action_type == ActionType.COURSE_CHANGE
+        assert action3.turn_angle == 20.0
 
 
 if __name__ == "__main__":

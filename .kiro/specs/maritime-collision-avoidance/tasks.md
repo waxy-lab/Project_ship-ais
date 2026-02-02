@@ -139,7 +139,7 @@
     - 测试边界情况
     - _Requirements: 3.1-3.4_
 
-  - [ ] 7.4 实现COLREGS规则应用函数
+  - [x] 7.4 实现COLREGS规则应用函数
     - 实现 apply_colregs_rule() 函数
     - 根据相遇类型返回避让动作
     - _Requirements: 3.1-3.6_

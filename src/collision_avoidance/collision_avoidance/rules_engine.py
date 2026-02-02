@@ -467,6 +467,14 @@ def apply_colregs_rule(encounter_type: EncounterType,
     
     根据相遇类型应用相应的COLREGS规则，生成避让动作。
     
+    规则应用逻辑：
+    1. 对遇（Rule 14）：双方向右转向
+    2. 交叉相遇（Rule 15/17）：
+       - 让路船：采取明显避让行动（大角度右转）
+       - 直航船：保持航向和航速
+    3. 追越（Rule 13）：追越船避让被追越船
+    4. 无相遇风险：无需动作
+    
     Args:
         encounter_type: 相遇类型
         own_ship: 本船状态
@@ -476,12 +484,95 @@ def apply_colregs_rule(encounter_type: EncounterType,
         避让动作
         
     Requirements: 3.1-3.6
-    
-    Note:
-        此函数将在任务7.4中实现
     """
-    # TODO: 在任务7.4中实现
-    raise NotImplementedError("此函数将在任务7.4中实现")
+    # 无相遇风险：无需动作
+    if encounter_type == EncounterType.NONE:
+        return AvoidanceAction(
+            action_type=ActionType.NO_ACTION,
+            no_action=True,
+            reason="无相遇风险，无需避让动作"
+        )
+    
+    # 对遇（Rule 14）：双方向右转向
+    if encounter_type == EncounterType.HEAD_ON:
+        return AvoidanceAction(
+            action_type=ActionType.COURSE_CHANGE,
+            turn_direction=TurnDirection.STARBOARD,
+            turn_angle=TURN_ANGLE_HEAD_ON,
+            reason="Rule 14: 对遇局面，向右转向"
+        )
+    
+    # 交叉相遇（Rule 15/17）：判断让路船和直航船
+    if encounter_type == EncounterType.CROSSING:
+        # 确定船舶角色
+        own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
+        
+        if own_role == VesselRole.GIVE_WAY:
+            # 让路船：采取明显避让行动（大角度右转）
+            return AvoidanceAction(
+                action_type=ActionType.COURSE_CHANGE,
+                turn_direction=TurnDirection.STARBOARD,
+                turn_angle=TURN_ANGLE_CROSSING_GIVE_WAY,
+                reason="Rule 15: 交叉相遇，本船为让路船，采取明显避让行动"
+            )
+        elif own_role == VesselRole.STAND_ON:
+            # 直航船：保持航向和航速
+            return AvoidanceAction(
+                action_type=ActionType.MAINTAIN,
+                maintain_course=True,
+                reason="Rule 17: 交叉相遇，本船为直航船，保持航向和航速"
+            )
+        else:
+            # 角色未定义，采取保守策略
+            return AvoidanceAction(
+                action_type=ActionType.NO_ACTION,
+                no_action=True,
+                reason="交叉相遇，角色未定义，无法确定避让动作"
+            )
+    
+    # 追越（Rule 13）：追越船避让被追越船
+    if encounter_type == EncounterType.OVERTAKING:
+        # 确定船舶角色
+        own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
+        
+        if own_role == VesselRole.GIVE_WAY:
+            # 本船是追越船，需要避让
+            # 计算相对方位，决定从哪一侧避让
+            relative_bearing = calculate_relative_bearing(own_ship, target_ship)
+            
+            # 如果目标船在左后方，向左避让；如果在右后方，向右避让
+            if relative_bearing < 0:
+                turn_dir = TurnDirection.PORT
+            else:
+                turn_dir = TurnDirection.STARBOARD
+            
+            return AvoidanceAction(
+                action_type=ActionType.COURSE_CHANGE,
+                turn_direction=turn_dir,
+                turn_angle=TURN_ANGLE_OVERTAKING,
+                reason="Rule 13: 追越局面，本船为追越船，避让被追越船"
+            )
+        elif own_role == VesselRole.STAND_ON:
+            # 本船被追越，保持航向和航速
+            return AvoidanceAction(
+                action_type=ActionType.MAINTAIN,
+                maintain_course=True,
+                reason="Rule 13: 追越局面，本船为被追越船，保持航向和航速"
+            )
+        else:
+            # 角色未定义，采取保守策略
+            return AvoidanceAction(
+                action_type=ActionType.NO_ACTION,
+                no_action=True,
+                reason="追越局面，角色未定义，无法确定避让动作"
+            )
+    
+    # 未知相遇类型（不应该到达这里）
+    return AvoidanceAction(
+        action_type=ActionType.NO_ACTION,
+        no_action=True,
+        reason=f"未知相遇类型: {encounter_type}"
+    )
 
 
 def analyze_encounter_situation(own_ship, target_ship) -> EncounterSituation:
