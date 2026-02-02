@@ -144,19 +144,19 @@
     - 根据相遇类型返回避让动作
     - _Requirements: 3.1-3.6_
 
-  - [ ]* 7.5 编写对遇规则的属性测试
+  - [x] 7.5 编写对遇规则的属性测试
     - **Property 7: 对遇规则的转向方向**
     - **Validates: Requirements 3.1**
     - 验证对遇时向右转向
     - _Requirements: 3.1_
 
-  - [ ]* 7.6 编写让路船避让的属性测试
+  - [x] 7.6 编写让路船避让的属性测试
     - **Property 8: 让路船的明显避让**
     - **Validates: Requirements 3.2**
     - 验证航向改变大于等于15度
     - _Requirements: 3.2_
 
-  - [ ]* 7.7 编写直航船保持的属性测试
+  - [x] 7.7 编写直航船保持的属性测试
     - **Property 9: 直航船的航向保持**
     - **Validates: Requirements 3.3**
     - _Requirements: 3.3_

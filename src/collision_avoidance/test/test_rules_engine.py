@@ -1145,5 +1145,347 @@ class TestApplyCOLREGSRule:
         assert action3.turn_angle == 20.0
 
 
+# ============================================================================
+# 属性测试（Property-Based Tests）
+# ============================================================================
+
+class TestPropertyHeadOnTurnDirection:
+    """
+    Property 7: 对遇规则的转向方向
+    
+    Feature: maritime-collision-avoidance, Property 7: 对遇规则的转向方向
+    Validates: Requirements 3.1
+    
+    对于任何检测到的对遇局面，避碰决策模块输出的转向指令应为向右（starboard）转向
+    """
+    
+    @given(
+        own_lat=st.floats(min_value=-80.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        own_lon=st.floats(min_value=-170.0, max_value=170.0, allow_nan=False, allow_infinity=False),
+        own_heading=st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False),
+        own_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        target_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        heading_offset=st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False),
+        relative_bearing_offset=st.floats(min_value=-5.0, max_value=5.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_head_on_always_turns_starboard(
+        self, 
+        own_lat, 
+        own_lon, 
+        own_heading, 
+        own_speed,
+        distance,
+        target_speed,
+        heading_offset,
+        relative_bearing_offset
+    ):
+        """
+        属性测试：对于任何对遇场景，系统应该输出向右转向指令
+        
+        测试策略：
+        1. 生成随机的本船状态（位置、航向、速度）
+        2. 根据对遇条件生成目标船状态：
+           - 航向差在170-190度之间（相向航行）
+           - 相对方位在-10到10度之间（正前方）
+        3. 验证apply_colregs_rule返回的动作为向右转向
+        
+        Requirements: 3.1
+        """
+        # 创建本船状态
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=own_lat,
+            longitude=own_lon,
+            heading=own_heading,
+            sog=own_speed
+        )
+        
+        # 计算目标船航向（相向航行，航向差约180度）
+        target_heading = (own_heading + 180.0 + heading_offset) % 360.0
+        
+        # 计算目标船位置（在本船前方，距离为distance海里）
+        # 相对方位接近0度（正前方），允许小偏差
+        bearing_to_target = own_heading + relative_bearing_offset
+        
+        # 将距离从海里转换为度（1度约60海里）
+        distance_degrees = distance / 60.0
+        
+        # 计算目标船的纬度和经度
+        bearing_rad = math.radians(bearing_to_target)
+        target_lat = own_lat + distance_degrees * math.cos(bearing_rad)
+        target_lon = own_lon + distance_degrees * math.sin(bearing_rad) / math.cos(math.radians(own_lat))
+        
+        # 确保目标船位置在有效范围内
+        assume(-90.0 <= target_lat <= 90.0)
+        assume(-180.0 <= target_lon <= 180.0)
+        
+        # 创建目标船状态
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=target_lat,
+            longitude=target_lon,
+            heading=target_heading,
+            sog=target_speed
+        )
+        
+        # 验证这确实是对遇场景
+        encounter_type = determine_encounter_type(own_ship, target_ship)
+        
+        # 只测试对遇场景
+        assume(encounter_type == EncounterType.HEAD_ON)
+        
+        # 应用COLREGS规则
+        action = apply_colregs_rule(encounter_type, own_ship, target_ship)
+        
+        # 验证属性：对遇时必须向右转向
+        assert action.action_type == ActionType.COURSE_CHANGE, \
+            f"对遇场景应该返回航向改变动作，但得到: {action.action_type}"
+        
+        assert action.turn_direction == TurnDirection.STARBOARD, \
+            f"对遇场景应该向右转向，但得到: {action.turn_direction}"
+        
+        assert action.turn_angle is not None and action.turn_angle > 0, \
+            f"转向角度应该大于0，但得到: {action.turn_angle}"
+        
+        assert "Rule 14" in action.reason, \
+            f"动作理由应该包含'Rule 14'，但得到: {action.reason}"
+
+
+class TestPropertyGiveWayObviousAvoidance:
+    """
+    Property 8: 让路船的明显避让
+    
+    Feature: maritime-collision-avoidance, Property 8: 让路船的明显避让
+    Validates: Requirements 3.2
+    
+    对于任何交叉相遇场景中被判定为让路船的情况，避碰决策模块输出的航向改变应大于等于15度
+    """
+    
+    @given(
+        own_lat=st.floats(min_value=-80.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        own_lon=st.floats(min_value=-170.0, max_value=170.0, allow_nan=False, allow_infinity=False),
+        own_heading=st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False),
+        own_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        target_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        relative_bearing=st.floats(min_value=5.0, max_value=112.5, allow_nan=False, allow_infinity=False),
+        target_heading_offset=st.floats(min_value=-90.0, max_value=90.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_give_way_obvious_avoidance(
+        self,
+        own_lat,
+        own_lon,
+        own_heading,
+        own_speed,
+        distance,
+        target_speed,
+        relative_bearing,
+        target_heading_offset
+    ):
+        """
+        属性测试：对于任何交叉相遇场景中的让路船，航向改变应大于等于15度
+        
+        测试策略：
+        1. 生成随机的本船状态（位置、航向、速度）
+        2. 根据交叉相遇条件生成目标船状态：
+           - 目标船在右舷（相对方位5-112.5度）
+           - 这样本船就是让路船
+        3. 验证apply_colregs_rule返回的航向改变角度 >= 15度
+        
+        Requirements: 3.2
+        """
+        # 创建本船状态
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=own_lat,
+            longitude=own_lon,
+            heading=own_heading,
+            sog=own_speed
+        )
+        
+        # 计算目标船位置（在本船右舷，相对方位在5-112.5度之间）
+        bearing_to_target = own_heading + relative_bearing
+        
+        # 将距离从海里转换为度（1度约60海里）
+        distance_degrees = distance / 60.0
+        
+        # 计算目标船的纬度和经度
+        bearing_rad = math.radians(bearing_to_target)
+        target_lat = own_lat + distance_degrees * math.cos(bearing_rad)
+        
+        # 考虑纬度修正
+        if abs(own_lat) < 89.0:  # 避免极点附近的问题
+            target_lon = own_lon + distance_degrees * math.sin(bearing_rad) / math.cos(math.radians(own_lat))
+        else:
+            target_lon = own_lon
+        
+        # 确保目标船位置在有效范围内
+        assume(-90.0 <= target_lat <= 90.0)
+        assume(-180.0 <= target_lon <= 180.0)
+        
+        # 计算目标船航向（使其与本船形成交叉态势）
+        # 目标船大致朝向本船方向或交叉方向
+        target_heading = (bearing_to_target + 180.0 + target_heading_offset) % 360.0
+        
+        # 创建目标船状态
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=target_lat,
+            longitude=target_lon,
+            heading=target_heading,
+            sog=target_speed
+        )
+        
+        # 判定相遇类型
+        encounter_type = determine_encounter_type(own_ship, target_ship)
+        
+        # 只测试交叉相遇场景
+        assume(encounter_type == EncounterType.CROSSING)
+        
+        # 确定船舶角色
+        own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
+        
+        # 只测试本船为让路船的情况
+        assume(own_role == VesselRole.GIVE_WAY)
+        
+        # 应用COLREGS规则
+        action = apply_colregs_rule(encounter_type, own_ship, target_ship)
+        
+        # 验证属性：让路船的航向改变应大于等于15度
+        assert action.action_type == ActionType.COURSE_CHANGE, \
+            f"让路船应该返回航向改变动作，但得到: {action.action_type}"
+        
+        assert action.turn_angle is not None, \
+            "让路船的转向角度不应为None"
+        
+        assert action.turn_angle >= 15.0, \
+            f"让路船的航向改变应大于等于15度（明显避让），但得到: {action.turn_angle}度"
+        
+        assert action.turn_direction == TurnDirection.STARBOARD, \
+            f"让路船应该向右转向，但得到: {action.turn_direction}"
+        
+        assert "Rule 15" in action.reason or "让路船" in action.reason, \
+            f"动作理由应该包含'Rule 15'或'让路船'，但得到: {action.reason}"
+
+
+class TestPropertyStandOnMaintainCourse:
+    """
+    Property 9: 直航船的航向保持
+    
+    Feature: maritime-collision-avoidance, Property 9: 直航船的航向保持
+    Validates: Requirements 3.3
+    
+    对于任何交叉相遇场景中被判定为直航船的情况，在让路船未采取行动前，
+    避碰决策模块应输出保持航向的指令
+    """
+    
+    @given(
+        own_lat=st.floats(min_value=-80.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        own_lon=st.floats(min_value=-170.0, max_value=170.0, allow_nan=False, allow_infinity=False),
+        own_heading=st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False),
+        own_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        distance=st.floats(min_value=0.5, max_value=10.0, allow_nan=False, allow_infinity=False),
+        target_speed=st.floats(min_value=5.0, max_value=25.0, allow_nan=False, allow_infinity=False),
+        relative_bearing=st.floats(min_value=-112.5, max_value=-5.0, allow_nan=False, allow_infinity=False),
+        target_heading_offset=st.floats(min_value=-90.0, max_value=90.0, allow_nan=False, allow_infinity=False)
+    )
+    def test_property_stand_on_maintain_course(
+        self,
+        own_lat,
+        own_lon,
+        own_heading,
+        own_speed,
+        distance,
+        target_speed,
+        relative_bearing,
+        target_heading_offset
+    ):
+        """
+        属性测试：对于任何交叉相遇场景中的直航船，应输出保持航向的指令
+        
+        测试策略：
+        1. 生成随机的本船状态（位置、航向、速度）
+        2. 根据交叉相遇条件生成目标船状态：
+           - 目标船在左舷（相对方位-112.5到-5度）
+           - 这样本船就是直航船
+        3. 验证apply_colregs_rule返回的动作为保持航向
+        
+        Requirements: 3.3
+        """
+        # 创建本船状态
+        own_ship = ShipState(
+            mmsi=123456789,
+            latitude=own_lat,
+            longitude=own_lon,
+            heading=own_heading,
+            sog=own_speed
+        )
+        
+        # 计算目标船位置（在本船左舷，相对方位在-112.5到-5度之间）
+        bearing_to_target = own_heading + relative_bearing
+        
+        # 将距离从海里转换为度（1度约60海里）
+        distance_degrees = distance / 60.0
+        
+        # 计算目标船的纬度和经度
+        bearing_rad = math.radians(bearing_to_target)
+        target_lat = own_lat + distance_degrees * math.cos(bearing_rad)
+        
+        # 考虑纬度修正
+        if abs(own_lat) < 89.0:  # 避免极点附近的问题
+            target_lon = own_lon + distance_degrees * math.sin(bearing_rad) / math.cos(math.radians(own_lat))
+        else:
+            target_lon = own_lon
+        
+        # 确保目标船位置在有效范围内
+        assume(-90.0 <= target_lat <= 90.0)
+        assume(-180.0 <= target_lon <= 180.0)
+        
+        # 计算目标船航向（使其与本船形成交叉态势）
+        # 目标船大致朝向本船方向或交叉方向
+        target_heading = (bearing_to_target + 180.0 + target_heading_offset) % 360.0
+        
+        # 创建目标船状态
+        target_ship = ShipState(
+            mmsi=987654321,
+            latitude=target_lat,
+            longitude=target_lon,
+            heading=target_heading,
+            sog=target_speed
+        )
+        
+        # 判定相遇类型
+        encounter_type = determine_encounter_type(own_ship, target_ship)
+        
+        # 只测试交叉相遇场景
+        assume(encounter_type == EncounterType.CROSSING)
+        
+        # 确定船舶角色
+        own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
+        
+        # 只测试本船为直航船的情况
+        assume(own_role == VesselRole.STAND_ON)
+        
+        # 应用COLREGS规则
+        action = apply_colregs_rule(encounter_type, own_ship, target_ship)
+        
+        # 验证属性：直航船应保持航向和航速
+        assert action.action_type == ActionType.MAINTAIN, \
+            f"直航船应该返回保持航向动作，但得到: {action.action_type}"
+        
+        assert action.maintain_course == True, \
+            f"直航船应该设置maintain_course=True，但得到: {action.maintain_course}"
+        
+        assert action.turn_direction is None or action.turn_direction == TurnDirection.NONE, \
+            f"直航船不应该转向，但得到转向方向: {action.turn_direction}"
+        
+        assert action.turn_angle is None or action.turn_angle == 0, \
+            f"直航船不应该有转向角度，但得到: {action.turn_angle}"
+        
+        assert "Rule 17" in action.reason or "直航船" in action.reason, \
+            f"动作理由应该包含'Rule 17'或'直航船'，但得到: {action.reason}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
