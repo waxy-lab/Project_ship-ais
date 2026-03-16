@@ -213,7 +213,7 @@
     - _Requirements: 5.6_
 
 - [ ] 10. 集成避碰决策模块到ROS2系统
-  - [ ] 10.1 创建避碰决策ROS2节点
+  - [x] 10.1 创建避碰决策ROS2节点
     - 创建 collision_avoidance_node.py
     - 定义 CollisionAvoidanceNode 类，继承自 rclpy.node.Node
     - 订阅 /ais/ship_states 话题

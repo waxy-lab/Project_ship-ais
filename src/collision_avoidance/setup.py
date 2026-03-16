@@ -23,8 +23,7 @@ setup(
     tests_require=['pytest', 'hypothesis'],
     entry_points={
         'console_scripts': [
-            # 避碰决策节点（后续实现）
-            # 'ca_node = collision_avoidance.ca_node:main',
+            'ca_node = collision_avoidance.collision_avoidance_node:main',
         ],
     },
 )
