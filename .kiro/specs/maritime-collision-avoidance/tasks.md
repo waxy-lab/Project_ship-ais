@@ -161,53 +161,53 @@
     - **Validates: Requirements 3.3**
     - _Requirements: 3.3_
 
-- [ ] 8. Checkpoint - 风险评估和规则引擎验证
+- [x] 8. Checkpoint - 风险评估和规则引擎验证
   - 运行所有风险评估和规则引擎测试
   - 验证COLREGS规则的正确性
   - 确保所有测试通过，询问用户是否有问题
 
 
-- [ ] 9. 实现路径规划模块
-  - [ ] 9.1 创建路径规划模块文件
+- [x] 9. 实现路径规划模块
+  - [x] 9.1 创建路径规划模块文件
     - 在 collision_avoidance 包中创建 path_planning.py
     - 定义 Path, AvoidanceAction 等数据类
     - _Requirements: 5.1-5.6_
 
-  - [ ] 9.2 实现候选路径生成函数
+  - [x] 9.2 实现候选路径生成函数
     - 实现 generate_avoidance_paths() 函数
     - 生成多种避让策略（转向、减速、组合）
     - _Requirements: 5.1_
 
-  - [ ]* 9.3 编写路径生成的单元测试
+  - [x] 9.3 编写路径生成的单元测试
     - 测试各种避让策略的生成
     - _Requirements: 5.1_
 
-  - [ ] 9.4 实现路径评估函数
+  - [x] 9.4 实现路径评估函数
     - 实现 evaluate_path() 函数
     - 评估安全性、效率、合规性
     - _Requirements: 5.2, 5.3, 5.4_
 
-  - [ ]* 9.5 编写路径安全性验证的属性测试
+  - [x] 9.5 编写路径安全性验证的属性测试
     - **Property 12: 路径安全性验证**
     - **Validates: Requirements 5.3**
     - 验证选择的路径不会引发新的碰撞风险
     - _Requirements: 5.3_
 
-  - [ ]* 9.6 编写路径COLREGS合规性的属性测试
+  - [x] 9.6 编写路径COLREGS合规性的属性测试
     - **Property 13: 路径COLREGS合规性**
     - **Validates: Requirements 5.4**
     - _Requirements: 5.4_
 
-  - [ ] 9.7 实现路径选择和控制指令生成
+  - [x] 9.7 实现路径选择和控制指令生成
     - 选择最优路径
     - 生成航向和航速调整指令
     - _Requirements: 5.5_
 
-  - [ ] 9.8 实现返航路径规划
+  - [x] 9.8 实现返航路径规划
     - 实现避让完成后返回原航线的逻辑
     - _Requirements: 5.6_
 
-  - [ ]* 9.9 编写返航路径的属性测试
+  - [x] 9.9 编写返航路径的属性测试
     - **Property 14: 避让后的返航路径**
     - **Validates: Requirements 5.6**
     - _Requirements: 5.6_
