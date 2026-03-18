@@ -7,11 +7,14 @@ import pyais.messages as ais_messages # 用于创建AIS消息
 from pyais.encode import encode_msg   # 用于编码NMEA
 import yaml
 import os
+import math
 from ament_index_python.packages import get_package_share_directory
 import random
 from shapely.geometry import Point, Polygon
 
 from ais_simulator.map_loader import MapLoader
+from ais_simulator.msg import AisShip, AisShipList
+from collision_avoidance.msg import ControlCommand
 
 class AisSimulatorNode(Node):
     #初始化相关属性
@@ -68,6 +71,21 @@ class AisSimulatorNode(Node):
         self.timer_period = 1.0  # (秒)
         self.timer_ = self.create_timer(self.timer_period, self.timer_callback)
 
+        # 控制指令订阅器（来自避碰决策节点）Requirements: 5.5
+        self._control_commands = {}  # mmsi -> ControlCommand
+        self._sub_control = self.create_subscription(
+            ControlCommand,
+            '/collision_avoidance/control_commands',
+            self._control_command_callback,
+            10)
+
+        # AIS 船舶状态发布器（供避碰节点订阅）
+        from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+        qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                         history=HistoryPolicy.KEEP_LAST, depth=10)
+        self._pub_ship_states = self.create_publisher(
+            AisShipList, '/ais/ship_states', qos)
+
         self.get_logger().info(f'AIS 模拟器已启动，模拟 {len(self.simulated_ships)} 艘船')
 
         target_map = map_path_param if map_path_param else default_map
@@ -94,7 +112,7 @@ class AisSimulatorNode(Node):
                     if all(k in ship for k in ['mmsi', 'latitude', 'longitude', 'heading', 'sog', 'rot']):
                         valid_ships.append(ship)
                     else:
-                        self.get_logger().warn(f"船只配置 {ship} 缺少关键字段，已被跳过。")
+                        self.get_logger().warning(f"船只配置 {ship} 缺少关键字段，已被跳过。")
                 return valid_ships
             else:
                 self.get_logger().error(f"配置文件 '{filename}' 中缺少 'simulated_ships' 键。")
@@ -109,12 +127,68 @@ class AisSimulatorNode(Node):
     def timer_callback(self):
         # 遍历我们内部列表中的每一艘船
         for ship_state in self.simulated_ships:
-            # 动态检测碰撞
-            self.avoid_collision_with_other_ships(ship_state, self.simulated_ships)
+            # 优先应用来自避碰决策节点的控制指令
+            mmsi = ship_state['mmsi']
+            if mmsi in self._control_commands:
+                self._apply_control_command(ship_state, self._control_commands[mmsi])
+            else:
+                # 回退到原有的简单避碰逻辑
+                self.avoid_collision_with_other_ships(ship_state, self.simulated_ships)
             # 更新这艘船的状态 (推算1秒后的位置)
             self.update_ship_state(ship_state)
             # 将状态编码为NMEA句子并发送
             self.generate_and_send_nmea(ship_state)
+        # 发布所有船舶状态到 /ais/ship_states
+        self._publish_ship_states()
+
+    def _control_command_callback(self, msg):
+        """接收避碰决策节点发布的控制指令 Requirements: 5.5"""
+        mmsi = msg.own_ship_mmsi
+        self._control_commands[mmsi] = msg
+        self.get_logger().info(
+            f'[控制指令] MMSI={mmsi} type={msg.command_type} '
+            f'heading={msg.target_heading:.1f} speed={msg.target_speed:.1f}')
+
+    def _apply_control_command(self, ship_state, cmd):
+        """将控制指令应用到船舶状态 Requirements: 5.5"""
+        import math as _math
+        nan = float('nan')
+        # 应用目标航向
+        if not _math.isnan(cmd.target_heading):
+            ship_state['target_heading'] = float(cmd.target_heading)
+        # 应用目标航速
+        if not _math.isnan(cmd.target_speed) and cmd.target_speed >= 0:
+            ship_state['sog'] = float(cmd.target_speed)
+        # 应用转向率
+        if not _math.isnan(cmd.turn_rate):
+            ship_state['rot'] = float(cmd.turn_rate)
+        # 指令执行完毕后清除（duration=0表示持续到下一条）
+        if cmd.duration > 0:
+            if '_cmd_remaining' not in ship_state:
+                ship_state['_cmd_remaining'] = cmd.duration
+            else:
+                ship_state['_cmd_remaining'] -= self.timer_period
+                if ship_state['_cmd_remaining'] <= 0:
+                    del ship_state['_cmd_remaining']
+                    del self._control_commands[ship_state['mmsi']]
+                    self.get_logger().info(
+                        f'[控制指令] MMSI={ship_state["mmsi"]} 指令执行完毕，恢复自主导航')
+
+    def _publish_ship_states(self):
+        """将所有船舶状态发布到 /ais/ship_states"""
+        msg = AisShipList()
+        for ship in self.simulated_ships:
+            ship_msg = AisShip()
+            ship_msg.mmsi = int(ship['mmsi'])
+            ship_msg.latitude = float(ship['latitude'])
+            ship_msg.longitude = float(ship['longitude'])
+            ship_msg.heading = float(ship['heading'])
+            ship_msg.sog = float(ship['sog'])
+            ship_msg.rot = float(ship.get('rot', 0.0))
+            ship_msg.length = float(ship.get('length', 50.0))
+            ship_msg.width = float(ship.get('width', 10.0))
+            msg.ships.append(ship_msg)
+        self._pub_ship_states.publish(msg)
 
     #将信息编码成NMEA字符串发送
     def generate_and_send_nmea(self, ship_state):
@@ -157,7 +231,7 @@ class AisSimulatorNode(Node):
             self.get_logger().info(f'MMSI {ship_state["mmsi"]}: 已发送 NMEA 句子', throttle_duration_sec=5.0)
 
         except Exception as e:
-            self.get_logger().warn(f'编码或发送NMEA时出错: {e}')
+            self.get_logger().warning(f'编码或发送NMEA时出错: {e}')
 
 
     #船只之间互相避让,检查当前船只与其他船只的距离，并在距离过近时修改航向
@@ -172,7 +246,7 @@ class AisSimulatorNode(Node):
             )
             #距离小于安全距离则调整方向
             if distance < self.SAFETY_DISTANCE:
-                self.get_logger().warn(f"{current_ship['mmsi']} 发现碰撞风险！")
+                self.get_logger().warning(f"{current_ship['mmsi']} 发现碰撞风险！")
                 
                 #执行避让动作
                 if abs(current_ship['rot']) < 5.0:
@@ -291,7 +365,7 @@ class AisSimulatorNode(Node):
             
         else:
             # --- 危险 (撞墙) ---
-            self.get_logger().warn(f"MMSI {ship_state['mmsi']} 撞墙警告！执行紧急避让。")
+            self.get_logger().warning(f"MMSI {ship_state['mmsi']} 撞墙警告！执行紧急避让。")
             
             # 强制大角度转向，完全接管控制权
             if abs(ship_state['rot']) < 10.0:
