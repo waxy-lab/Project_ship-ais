@@ -285,17 +285,47 @@
     - 18个测试用例全部通过（JSON/CSV/TXT格式）
     - _Requirements: 6.6_
 
-- [ ] 13. 实现数据记录模块
-  - [ ] 13.1 创建数据记录ROS2节点
+- [x] 13. 实现数据记录模块
+  - [x] 13.1 创建数据记录ROS2节点
     - 创建 data_logger_node.py
     - 创建 DataLoggerNode 类
     - 订阅所有关键话题
     - _Requirements: 9.1-9.3_
 
-  - [ ] 13.2 实现AIS数据记录
+  - [x] 13.2 实现AIS数据记录
     - 记录所有船舶的AIS数据
     - 写入时序数据库或文件
     - _Requirements: 9.1_
+
+  - [x] 13.3 编写AIS数据记录的属性测试
+    - **Property 15: 数据记录的完整性**
+    - **Validates: Requirements 9.1**
+    - 验证记录的数据点数正确
+    - _Requirements: 9.1_
+
+  - [x] 13.4 实现避让决策记录
+    - 记录所有避让决策和控制指令
+    - _Requirements: 9.2_
+
+  - [x] 13.5 编写决策记录的属性测试
+    - **Property 16: 决策记录的时间戳一致性**
+    - **Validates: Requirements 9.2**
+    - _Requirements: 9.2_
+
+  - [x] 13.6 实现中间计算结果记录
+    - 记录DCPA、TCPA、CRI等中间结果
+    - _Requirements: 9.3_
+
+  - [x] 13.7 实现数据导出功能
+    - 支持CSV、JSON格式导出
+    - _Requirements: 9.4_
+
+  - [x] 13.8 编写数据导出的round-trip测试
+    - **Property 17: 数据导出格式的可解析性**
+    - **Validates: Requirements 9.4**
+    - 验证导出后能正确解析
+    - 25个测试用例全部通过
+    - _Requirements: 9.4_
 
   - [ ]* 13.3 编写AIS数据记录的属性测试
     - **Property 15: 数据记录的完整性**
