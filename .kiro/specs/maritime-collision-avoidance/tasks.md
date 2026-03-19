@@ -394,8 +394,11 @@
     - 22个测试用例全部通过
     - _Requirements: 7.4_
 
-  - [ ]* 15.6 实现回放数据准备
+  - [x] 15.6 实现回放数据准备
     - 将记录的数据转换为回放格式
+    - ReplayExporter + ReplayData + ReplayFrame
+    - 支持JSON和CSV导出，按帧间隔重采样
+    - 30个测试用例全部通过
     - _Requirements: 7.5_
 
   - [ ]* 15.7 实现配置热加载功能
