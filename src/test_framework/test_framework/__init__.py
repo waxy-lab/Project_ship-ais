@@ -7,6 +7,20 @@
 
 __version__ = "0.1.0"
 
+from .metrics import (
+    ScenarioResult,
+    CollisionEvent,
+    CourseChangeEvent,
+    ShipTrackPoint,
+    PerformanceMetrics,
+    BatchTestReport,
+)
+
+from .test_runner import (
+    ScenarioRunner,
+    TestRunner,
+)
+
 from .strategies import (
     # 基础策略
     latitude_strategy,
@@ -54,6 +68,16 @@ from .test_helpers import (
 )
 
 __all__ = [
+    # 性能指标
+    'ScenarioResult',
+    'CollisionEvent',
+    'CourseChangeEvent',
+    'ShipTrackPoint',
+    'PerformanceMetrics',
+    'BatchTestReport',
+    # 测试运行器
+    'ScenarioRunner',
+    'TestRunner',
     # 策略
     'latitude_strategy',
     'longitude_strategy',

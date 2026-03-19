@@ -251,15 +251,16 @@
   - 确保所有测试通过，询问用户是否有问题
 
 - [ ] 12. 实现测试评估框架
-  - [ ] 12.1 创建性能指标数据模型
+  - [x] 12.1 创建性能指标数据模型
     - 在 test_framework 中创建 metrics.py
     - 实现 PerformanceMetrics 数据类
     - 定义所有评估指标
     - _Requirements: 6.1-6.5_
 
-  - [ ] 12.2 实现场景运行和数据收集
+  - [x] 12.2 实现场景运行和数据收集
     - 创建 test_runner.py
-    - 实现 TestRunner 类
+    - 实现 ScenarioRunner 类（单场景仿真）
+    - 实现 TestRunner 类（批量运行）
     - 运行场景并收集数据
     - _Requirements: 6.1-6.6_
 
