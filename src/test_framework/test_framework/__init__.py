@@ -21,6 +21,22 @@ from .test_runner import (
     TestRunner,
 )
 
+from .metrics_calculator import (
+    calculate_success_rate,
+    calculate_success_rate_by_type,
+    calculate_avg_dcpa,
+    calculate_overall_min_dcpa,
+    calculate_course_change_stats,
+    calculate_avg_course_change_count,
+    calculate_avg_course_change_angle,
+    calculate_distance_increase,
+    calculate_avg_distance_increase,
+    calculate_colregs_compliance_rate,
+    calculate_avg_colregs_compliance_rate,
+    update_metrics_calculations,
+    compute_batch_report,
+)
+
 from .strategies import (
     # 基础策略
     latitude_strategy,
@@ -78,6 +94,20 @@ __all__ = [
     # 测试运行器
     'ScenarioRunner',
     'TestRunner',
+    # 指标计算
+    'calculate_success_rate',
+    'calculate_success_rate_by_type',
+    'calculate_avg_dcpa',
+    'calculate_overall_min_dcpa',
+    'calculate_course_change_stats',
+    'calculate_avg_course_change_count',
+    'calculate_avg_course_change_angle',
+    'calculate_distance_increase',
+    'calculate_avg_distance_increase',
+    'calculate_colregs_compliance_rate',
+    'calculate_avg_colregs_compliance_rate',
+    'update_metrics_calculations',
+    'compute_batch_report',
     # 策略
     'latitude_strategy',
     'longitude_strategy',
