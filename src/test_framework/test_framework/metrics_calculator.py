@@ -4,7 +4,7 @@ Requirements: 6.1-6.5
 """
 import math
 from typing import List, Dict, Tuple
-from test_framework.metrics import (
+from .metrics import (
     PerformanceMetrics, BatchTestReport, ScenarioResult
 )
 

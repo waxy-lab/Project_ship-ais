@@ -16,7 +16,7 @@ from collision_avoidance.rules_engine import (
 from collision_avoidance.path_planning import (
     plan_avoidance, plan_return_path, ReturnPathConfig
 )
-from test_framework.metrics import (
+from .metrics import (
     PerformanceMetrics, BatchTestReport, ScenarioResult,
     CollisionEvent, CourseChangeEvent, ShipTrackPoint
 )
