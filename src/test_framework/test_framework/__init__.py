@@ -37,6 +37,8 @@ from .metrics_calculator import (
     compute_batch_report,
 )
 
+from .report_generator import ReportGenerator
+
 from .strategies import (
     # 基础策略
     latitude_strategy,
@@ -108,6 +110,8 @@ __all__ = [
     'calculate_avg_colregs_compliance_rate',
     'update_metrics_calculations',
     'compute_batch_report',
+    # 报告生成
+    'ReportGenerator',
     # 策略
     'latitude_strategy',
     'longitude_strategy',
