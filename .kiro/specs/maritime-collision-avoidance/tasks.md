@@ -280,8 +280,9 @@
     - 创建 report_generator.py 和 scripts/run_batch_test.py
     - _Requirements: 6.6_
 
-  - [ ]* 12.6 编写报告生成的单元测试
+  - [x] 12.6 编写报告生成的单元测试
     - 测试报告文件生成
+    - 18个测试用例全部通过（JSON/CSV/TXT格式）
     - _Requirements: 6.6_
 
 - [ ] 13. 实现数据记录模块
