@@ -388,9 +388,10 @@
     - 修改避让时机参数
     - _Requirements: 2.5_
 
-  - [ ]* 15.5 实现可视化模块（基础版）
-    - 创建实时参数发布节点
-    - 发布DCPA、TCPA、CRI等关键参数
+  - [x] 15.5 实现可视化模块（基础版）
+    - 创建实时参数发布节点 visualization_publisher_node.py
+    - 发布DCPA、TCPA、CRI等关键参数到3个话题
+    - 22个测试用例全部通过
     - _Requirements: 7.4_
 
   - [ ]* 15.6 实现回放数据准备

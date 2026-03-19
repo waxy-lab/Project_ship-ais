@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ca_node = collision_avoidance.collision_avoidance_node:main',
+            'viz_node = collision_avoidance.visualization_publisher_node:main',
         ],
     },
 )
