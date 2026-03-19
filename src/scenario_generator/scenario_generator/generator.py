@@ -14,7 +14,8 @@ from .models import (
     ScenarioConfig,
     ScenarioType,
     ShipState,
-    EnvironmentConfig
+    EnvironmentConfig,
+    WaterAreaType
 )
 
 
@@ -175,6 +176,47 @@ class EmergencyParams:
             raise ValueError(f"船2速度必须大于0: {self.speed2}")
         if self.speed1 > 50 or self.speed2 > 50:
             raise ValueError(f"速度不应超过50节")
+        if not (-90 <= self.base_latitude <= 90):
+            raise ValueError(f"纬度必须在-90到90之间: {self.base_latitude}")
+        if not (-180 <= self.base_longitude <= 180):
+            raise ValueError(f"经度必须在-180到180之间: {self.base_longitude}")
+
+
+@dataclass
+class RestrictedWaterParams:
+    """
+    受限水域场景参数
+    Requirements: 2.3
+    """
+    channel_width_nm: float = 0.5    # 航道宽度（海里）
+    channel_length_nm: float = 5.0   # 航道长度（海里）
+    channel_heading: float = 90.0    # 航道方向（度，东向为90）
+    num_ships: int = 2               # 场景中的船舶数量（含本船）
+    own_speed: float = 8.0           # 本船速度（节）
+    target_speed: float = 8.0        # 目标船速度（节）
+    base_latitude: float = 30.0      # 基准纬度
+    base_longitude: float = 120.0    # 基准经度
+    own_mmsi: int = 123456789        # 本船 MMSI
+    target_mmsi: int = 987654321     # 目标船 MMSI
+    duration: float = 400.0          # 场景时长（秒）
+    separation_nm: float = 1.0       # 初始船间距（海里）
+    scenario_id: Optional[str] = None
+
+    def __post_init__(self):
+        if self.channel_width_nm <= 0:
+            raise ValueError(f"航道宽度必须大于0: {self.channel_width_nm}")
+        if self.channel_width_nm > 5:
+            raise ValueError(f"航道宽度不应超过5海里: {self.channel_width_nm}")
+        if self.channel_length_nm <= 0:
+            raise ValueError(f"航道长度必须大于0: {self.channel_length_nm}")
+        if self.num_ships < 2:
+            raise ValueError(f"船舶数量至少为2: {self.num_ships}")
+        if self.own_speed <= 0 or self.target_speed <= 0:
+            raise ValueError("船舶速度必须大于0")
+        if self.separation_nm <= 0:
+            raise ValueError(f"初始间距必须大于0: {self.separation_nm}")
+        if self.separation_nm > self.channel_length_nm:
+            raise ValueError("初始间距不能超过航道长度")
         if not (-90 <= self.base_latitude <= 90):
             raise ValueError(f"纬度必须在-90到90之间: {self.base_latitude}")
         if not (-180 <= self.base_longitude <= 180):
@@ -879,6 +921,92 @@ class ScenarioGenerator:
             scenario_type=ScenarioType.MULTI_SHIP,
             ships=ships,
             environment=self.environment,
+            duration=params.duration,
+            description=description,
+        )
+
+    def generate_restricted_water_scenario(
+            self, params: RestrictedWaterParams) -> ScenarioConfig:
+        """
+        生成受限水域场景
+
+        在狭窄航道中生成对遇场景，船舶限制在航道宽度内行驶。
+        Requirements: 2.3
+
+        Args:
+            params: RestrictedWaterParams 参数
+        Returns:
+            ScenarioConfig，包含水域边界约束信息
+        """
+        scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
+        nm = self.NAUTICAL_MILE_TO_DEGREE
+        hdg_rad = math.radians(params.channel_heading)
+
+        # 沿航道方向的单位向量
+        along_x = math.sin(hdg_rad)   # 经度方向
+        along_y = math.cos(hdg_rad)   # 纬度方向
+
+        # 本船：在航道中央，朝航道方向行驶
+        own_ship = ShipState(
+            mmsi=params.own_mmsi,
+            latitude=params.base_latitude,
+            longitude=params.base_longitude,
+            heading=params.channel_heading,
+            sog=params.own_speed,
+            rot=0.0,
+        )
+
+        # 目标船：在本船前方 separation_nm 处，朝相反方向行驶
+        sep = params.separation_nm
+        lat_lat_corr = max(math.cos(math.radians(params.base_latitude)), 1e-6)
+        target_ship = ShipState(
+            mmsi=params.target_mmsi,
+            latitude=params.base_latitude + along_y * sep * nm,
+            longitude=params.base_longitude + along_x * sep * nm / lat_lat_corr,
+            heading=(params.channel_heading + 180.0) % 360.0,
+            sog=params.target_speed,
+            rot=0.0,
+        )
+        ships = [own_ship, target_ship]
+
+        # 计算航道边界（左右各 channel_width/2）
+        half_w = params.channel_width_nm / 2.0
+        perp_rad = math.radians(params.channel_heading + 90.0)
+        perp_x = math.sin(perp_rad)
+        perp_y = math.cos(perp_rad)
+
+        # 用四个角点定义航道边界（map_boundaries）
+        half_l = params.channel_length_nm / 2.0
+        corners = []
+        for al in [-half_l, half_l]:
+            for pe in [-half_w, half_w]:
+                clat = (params.base_latitude
+                        + along_y * al * nm
+                        + perp_y * pe * nm)
+                clon = (params.base_longitude
+                        + along_x * al * nm / lat_lat_corr
+                        + perp_x * pe * nm / lat_lat_corr)
+                corners.append((clat, clon))
+
+        # 始终创建受限水域环境（除非外部传入了自定义环境）
+        if self.environment.water_area_type == WaterAreaType.OPEN:
+            env = EnvironmentConfig(
+                water_area_type=WaterAreaType.RESTRICTED,
+                map_boundaries=corners,
+            )
+        else:
+            env = self.environment
+
+        description = (
+            f"受限水域场景: 航道宽度={params.channel_width_nm:.1f}nm"
+            f", 长度={params.channel_length_nm:.1f}nm"
+            f", 航向={params.channel_heading:.0f}°"
+        )
+        return ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.HEAD_ON,
+            ships=ships,
+            environment=env,
             duration=params.duration,
             description=description,
         )

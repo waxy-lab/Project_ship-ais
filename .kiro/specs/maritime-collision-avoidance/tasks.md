@@ -369,9 +369,11 @@
     - 24个测试用例全部通过
     - _Requirements: 2.2_
 
-  - [ ]* 15.2 实现受限水域场景生成器
+  - [x] 15.2 实现受限水域场景生成器
     - 添加狭窄航道和港口水域约束
-    - 集成地图边界
+    - RestrictedWaterParams + generate_restricted_water_scenario()
+    - 集成航道边界（map_boundaries四角点）
+    - 30个测试用例全部通过
     - _Requirements: 2.3_
 
   - [ ]* 15.3 实现恶劣天气场景生成器

@@ -28,7 +28,8 @@ from .generator import (
     OvertakingParams,
     MultiShipParams,
     EmergencyParams,
-    SurroundingParams
+    SurroundingParams,
+    RestrictedWaterParams
 )
 
 from .scenario_loader import ScenarioLoader
@@ -48,5 +49,6 @@ __all__ = [
     'MultiShipParams',
     'EmergencyParams',
     'SurroundingParams',
+    'RestrictedWaterParams',
     'ScenarioLoader'
 ]
