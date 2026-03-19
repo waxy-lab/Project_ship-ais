@@ -376,8 +376,11 @@
     - 30个测试用例全部通过
     - _Requirements: 2.3_
 
-  - [ ]* 15.3 实现恶劣天气场景生成器
+  - [x] 15.3 实现恶劣天气场景生成器
     - 在船舶运动模型中添加风浪干扰
+    - RoughWeatherParams + generate_rough_weather_scenario()
+    - 支持风速/风向/流速/流向/能见度配置
+    - 39个测试用例全部通过
     - _Requirements: 2.4_
 
   - [ ]* 15.4 实现能见度不良场景生成器

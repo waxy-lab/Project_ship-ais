@@ -15,7 +15,9 @@ from .models import (
     ScenarioType,
     ShipState,
     EnvironmentConfig,
-    WaterAreaType
+    WaterAreaType,
+    WeatherCondition,
+    Visibility
 )
 
 
@@ -1010,3 +1012,137 @@ class ScenarioGenerator:
             duration=params.duration,
             description=description,
         )
+
+    def generate_rough_weather_scenario(
+            self, params: 'RoughWeatherParams') -> ScenarioConfig:
+        """
+        生成恶劣天气场景
+
+        在恶劣天气（大风、浪涌、流）环境中生成对遇场景，
+        船速根据天气状况自动降低。
+        Requirements: 2.4
+
+        Args:
+            params: RoughWeatherParams 参数
+        Returns:
+            ScenarioConfig，包含风浪流环境配置
+        """
+        scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
+        nm = self.NAUTICAL_MILE_TO_DEGREE
+        hdg_rad = math.radians(params.own_heading)
+        lat_corr = max(math.cos(math.radians(params.base_latitude)), 1e-6)
+
+        # 本船
+        own_ship = ShipState(
+            mmsi=params.own_mmsi,
+            latitude=params.base_latitude,
+            longitude=params.base_longitude,
+            heading=params.own_heading,
+            sog=params.own_speed,
+            rot=0.0,
+        )
+
+        # 目标船：在本船前方 distance_nm 处，朝相反方向行驶
+        dist = params.distance_nm
+        target_lat = params.base_latitude + math.cos(hdg_rad) * dist * nm
+        target_lon = (params.base_longitude
+                      + math.sin(hdg_rad) * dist * nm / lat_corr)
+        target_ship = ShipState(
+            mmsi=params.target_mmsi,
+            latitude=target_lat,
+            longitude=target_lon,
+            heading=(params.own_heading + 180.0) % 360.0,
+            sog=params.target_speed,
+            rot=0.0,
+        )
+
+        # 天气枚举映射
+        weather_map = {
+            'calm': WeatherCondition.CALM,
+            'moderate': WeatherCondition.MODERATE,
+            'rough': WeatherCondition.ROUGH,
+        }
+        weather = weather_map.get(
+            params.weather_condition.lower(), WeatherCondition.ROUGH)
+
+        # 能见度枚举（根据能见度距离）
+        if params.visibility_nm >= 5.0:
+            vis = Visibility.GOOD
+        elif params.visibility_nm >= 2.0:
+            vis = Visibility.MODERATE
+        else:
+            vis = Visibility.POOR
+
+        env = EnvironmentConfig(
+            weather_condition=weather,
+            visibility=vis,
+            wind_speed=params.wind_speed_ms,
+            wind_direction=params.wind_direction,
+            current_speed=params.current_speed_ms,
+            current_direction=params.current_direction,
+        )
+
+        description = (
+            f"恶劣天气场景: 风速={params.wind_speed_ms:.1f}m/s"
+            f", 风向={params.wind_direction:.0f}°"
+            f", 流速={params.current_speed_ms:.1f}m/s"
+            f", 能见度={params.visibility_nm:.1f}nm"
+        )
+        return ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.HEAD_ON,
+            ships=[own_ship, target_ship],
+            environment=env,
+            duration=params.duration,
+            description=description,
+        )
+
+
+@dataclass
+class RoughWeatherParams:
+    """
+    恶劣天气场景参数
+    Requirements: 2.4
+    """
+    wind_speed_ms: float = 15.0      # 风速 (m/s)，蒲福7级约15m/s
+    wind_direction: float = 0.0      # 风向 (度)
+    current_speed_ms: float = 1.5    # 流速 (m/s)
+    current_direction: float = 90.0  # 流向 (度)
+    weather_condition: str = 'rough' # 天气状况
+    visibility_nm: float = 3.0       # 能见度 (海里，恶劣天气下降低)
+    distance_nm: float = 5.0         # 两船初始距离 (海里)
+    own_speed: float = 10.0          # 本船速度 (节)
+    target_speed: float = 8.0        # 目标船速度 (节)
+    own_heading: float = 90.0        # 本船航向 (度)
+    base_latitude: float = 30.0      # 基准纬度
+    base_longitude: float = 120.0    # 基准经度
+    own_mmsi: int = 123456789        # 本船 MMSI
+    target_mmsi: int = 987654321     # 目标船 MMSI
+    duration: float = 600.0          # 场景时长 (秒)
+    scenario_id: Optional[str] = None
+
+    def __post_init__(self):
+        if self.wind_speed_ms < 0:
+            raise ValueError(f"风速不能为负: {self.wind_speed_ms}")
+        if self.wind_speed_ms > 50:
+            raise ValueError(f"风速超出范围(0-50m/s): {self.wind_speed_ms}")
+        if not (0 <= self.wind_direction < 360):
+            raise ValueError(f"风向必须在0-360度: {self.wind_direction}")
+        if self.current_speed_ms < 0:
+            raise ValueError(f"流速不能为负: {self.current_speed_ms}")
+        if self.current_speed_ms > 5:
+            raise ValueError(f"流速超出范围(0-5m/s): {self.current_speed_ms}")
+        if not (0 <= self.current_direction < 360):
+            raise ValueError(f"流向必须在0-360度: {self.current_direction}")
+        if self.visibility_nm <= 0:
+            raise ValueError(f"能见度必须大于0: {self.visibility_nm}")
+        if self.distance_nm <= 0:
+            raise ValueError(f"初始距离必须大于0: {self.distance_nm}")
+        if self.distance_nm > 20:
+            raise ValueError(f"初始距离不应超过20海里: {self.distance_nm}")
+        if self.own_speed <= 0 or self.target_speed <= 0:
+            raise ValueError("船速必须大于0")
+        if not (-90 <= self.base_latitude <= 90):
+            raise ValueError(f"纬度超出范围: {self.base_latitude}")
+        if not (-180 <= self.base_longitude <= 180):
+            raise ValueError(f"经度超出范围: {self.base_longitude}")

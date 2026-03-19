@@ -29,7 +29,8 @@ from .generator import (
     MultiShipParams,
     EmergencyParams,
     SurroundingParams,
-    RestrictedWaterParams
+    RestrictedWaterParams,
+    RoughWeatherParams
 )
 
 from .scenario_loader import ScenarioLoader
@@ -50,5 +51,6 @@ __all__ = [
     'EmergencyParams',
     'SurroundingParams',
     'RestrictedWaterParams',
+    'RoughWeatherParams',
     'ScenarioLoader'
 ]
