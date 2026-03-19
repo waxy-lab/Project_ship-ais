@@ -27,7 +27,8 @@ from .generator import (
     CrossingParams,
     OvertakingParams,
     MultiShipParams,
-    EmergencyParams
+    EmergencyParams,
+    SurroundingParams
 )
 
 from .scenario_loader import ScenarioLoader
@@ -46,5 +47,6 @@ __all__ = [
     'OvertakingParams',
     'MultiShipParams',
     'EmergencyParams',
+    'SurroundingParams',
     'ScenarioLoader'
 ]

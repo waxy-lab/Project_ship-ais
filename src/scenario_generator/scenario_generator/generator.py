@@ -181,9 +181,44 @@ class EmergencyParams:
             raise ValueError(f"经度必须在-180到180之间: {self.base_longitude}")
 
 
+@dataclass
+class SurroundingParams:
+    """多船包围场景参数 Requirements: 2.2"""
+    num_surrounding: int = 4         # 包围船数量
+    surrounding_distance: float = 2.0  # 包围距离（海里）
+    own_speed: float = 10.0          # 本船速度（节）
+    own_heading: float = 0.0         # 本船航向（度）
+    min_speed: float = 8.0           # 包围船最小速度（节）
+    max_speed: float = 15.0          # 包围船最大速度（节）
+    base_latitude: float = 30.0      # 基准纬度
+    base_longitude: float = 120.0    # 基准经度
+    own_mmsi: int = 123456789        # 本船 MMSI
+    start_mmsi: int = 200000000      # 包围船起始 MMSI
+    duration: float = 600.0          # 场景时长（秒）
+    random_angles: bool = False      # 是否随机角度
+    random_offset: bool = True       # 是否随机偏移起始角度
+    seed: Optional[int] = None       # 随机种子
+    scenario_id: Optional[str] = None  # 场景 ID
+
+    def __post_init__(self):
+        if self.num_surrounding < 2:
+            raise ValueError(f"包围船数量至少为2: {self.num_surrounding}")
+        if self.num_surrounding > 12:
+            raise ValueError(f"包围船数量不应超过12: {self.num_surrounding}")
+        if self.surrounding_distance <= 0:
+            raise ValueError(f"包围距离必须大于0: {self.surrounding_distance}")
+        if self.surrounding_distance > 20:
+            raise ValueError(f"包围距离不应超过20海里: {self.surrounding_distance}")
+        if self.own_speed <= 0:
+            raise ValueError(f"本船速度必须大于0: {self.own_speed}")
+        if self.min_speed <= 0 or self.max_speed <= 0:
+            raise ValueError("包围船速度必须大于0")
+        if self.min_speed > self.max_speed:
+            raise ValueError(f"最小速度不能大于最大速度")
+
+
 class ScenarioGenerator:
-    """场景生成器类
-    
+    """
     根据配置参数生成标准化的船舶相遇场景
     """
     
@@ -775,3 +810,75 @@ class ScenarioGenerator:
         tcpa_minutes = tcpa_hours * 60.0
         
         return dcpa_nautical_miles, tcpa_minutes
+
+    def generate_surrounding_scenario(
+            self, params: 'SurroundingParams') -> ScenarioConfig:
+        """
+        生成多船包围场景
+
+        目标船（own ship）被若干艘船从不同方向包围，
+        每艘包围船都朝向目标船驶来。
+        Requirements: 2.2
+
+        Args:
+            params: SurroundingParams 参数
+        Returns:
+            ScenarioConfig
+        """
+        rng = random.Random(params.seed)
+        scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
+
+        # 目标船（本船）
+        own_ship = ShipState(
+            mmsi=params.own_mmsi,
+            latitude=params.base_latitude,
+            longitude=params.base_longitude,
+            heading=params.own_heading,
+            sog=params.own_speed,
+            rot=0.0,
+        )
+        ships = [own_ship]
+
+        # 均匀分布 or 随机分布方向
+        n = params.num_surrounding
+        if params.random_angles:
+            angles = sorted([rng.uniform(0, 360) for _ in range(n)])
+        else:
+            base = rng.uniform(0, 360 / n) if params.random_offset else 0.0
+            angles = [(base + i * 360.0 / n) % 360 for i in range(n)]
+
+        nm_to_deg = self.NAUTICAL_MILE_TO_DEGREE
+        for i, bearing_deg in enumerate(angles):
+            bearing_rad = math.radians(bearing_deg)
+            dist = params.surrounding_distance
+            # 包围船位置（在目标船周围）
+            lat = params.base_latitude + dist * math.cos(bearing_rad) * nm_to_deg
+            lon = (params.base_longitude +
+                   dist * math.sin(bearing_rad) * nm_to_deg
+                   / max(math.cos(math.radians(params.base_latitude)), 1e-6))
+            # 包围船朝向目标船（反方向 + 180°）
+            toward_own = (bearing_deg + 180.0) % 360.0
+            speed = rng.uniform(params.min_speed, params.max_speed)
+            mmsi = params.start_mmsi + i
+            ship = ShipState(
+                mmsi=mmsi,
+                latitude=lat,
+                longitude=lon,
+                heading=toward_own,
+                sog=speed,
+                rot=0.0,
+            )
+            ships.append(ship)
+
+        description = (
+            f"多船包围场景: 本船被{n}艘船从四周包围"
+            f"，包围距离={params.surrounding_distance:.1f}nm"
+        )
+        return ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.MULTI_SHIP,
+            ships=ships,
+            environment=self.environment,
+            duration=params.duration,
+            description=description,
+        )
