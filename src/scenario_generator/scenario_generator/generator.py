@@ -1097,6 +1097,128 @@ class ScenarioGenerator:
             description=description,
         )
 
+    def generate_poor_visibility_scenario(
+            self, params: 'PoorVisibilityParams') -> ScenarioConfig:
+        """
+        生成能见度不良场景
+
+        在能见度不良条件下（<2nm），两船对遇。
+        场景配置包含调整后的安全阈值，供决策模块使用。
+        Requirements: 2.5
+
+        Args:
+            params: PoorVisibilityParams 参数
+        Returns:
+            ScenarioConfig，description 中包含调整后的阈值信息
+        """
+        scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
+        nm = self.NAUTICAL_MILE_TO_DEGREE
+        hdg_rad = math.radians(params.own_heading)
+        lat_corr = max(math.cos(math.radians(params.base_latitude)), 1e-6)
+
+        # 本船
+        own_ship = ShipState(
+            mmsi=params.own_mmsi,
+            latitude=params.base_latitude,
+            longitude=params.base_longitude,
+            heading=params.own_heading,
+            sog=params.own_speed,
+            rot=0.0,
+        )
+
+        # 目标船：在本船前方 distance_nm 处，对向行驶
+        target_ship = ShipState(
+            mmsi=params.target_mmsi,
+            latitude=params.base_latitude + math.cos(hdg_rad) * params.distance_nm * nm,
+            longitude=(params.base_longitude
+                       + math.sin(hdg_rad) * params.distance_nm * nm / lat_corr),
+            heading=(params.own_heading + 180.0) % 360.0,
+            sog=params.target_speed,
+            rot=0.0,
+        )
+
+        # 能见度枚举
+        if params.visibility_nm >= 5.0:
+            vis = Visibility.GOOD
+        elif params.visibility_nm >= 2.0:
+            vis = Visibility.MODERATE
+        else:
+            vis = Visibility.POOR
+
+        env = EnvironmentConfig(
+            weather_condition=WeatherCondition.MODERATE,
+            visibility=vis,
+        )
+
+        description = (
+            f"能见度不良场景: 能见度={params.visibility_nm:.1f}nm"
+            f", 安全距离={params.safe_distance_nm:.1f}nm"
+            f", 安全时间={params.safe_time_min:.0f}min"
+            f", 预警阈值={params.risk_threshold_warning:.2f}"
+            f", 危险阈值={params.risk_threshold_danger:.2f}"
+        )
+        return ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.HEAD_ON,
+            ships=[own_ship, target_ship],
+            environment=env,
+            duration=params.duration,
+            description=description,
+        )
+
+
+@dataclass
+class PoorVisibilityParams:
+    """
+    能见度不良场景参数
+
+    在低能见度条件下，需要更早启动避让（更大安全距离），
+    更保守的风险阈值（更低CRI触发预警）。
+    Requirements: 2.5
+    """
+    visibility_nm: float = 1.0       # 能见度（海里），<2为不良
+    distance_nm: float = 4.0         # 两船初始距离（海里）
+    own_speed: float = 8.0           # 本船速度（节，低能见度下降速）
+    target_speed: float = 8.0        # 目标船速度（节）
+    own_heading: float = 0.0         # 本船航向（度）
+    base_latitude: float = 30.0      # 基准纬度
+    base_longitude: float = 120.0    # 基准经度
+    own_mmsi: int = 123456789        # 本船 MMSI
+    target_mmsi: int = 987654321     # 目标船 MMSI
+    duration: float = 500.0          # 场景时长（秒）
+    scenario_id: Optional[str] = None
+    # 调整后的风险阈值（能见度不良时更保守）
+    risk_threshold_warning: float = 0.3   # 预警阈值（正常0.5，低能见降为0.3）
+    risk_threshold_danger: float = 0.5    # 危险阈值（正常0.7，低能见降为0.5）
+    safe_distance_nm: float = 3.0         # 安全距离（正常2nm，低能见增至3nm）
+    safe_time_min: float = 15.0           # 安全时间（正常10min，低能见增至15min）
+
+    def __post_init__(self):
+        if self.visibility_nm <= 0:
+            raise ValueError(f"能见度必须大于0: {self.visibility_nm}")
+        if self.visibility_nm > 10:
+            raise ValueError(f"能见度不应超过10海里: {self.visibility_nm}")
+        if self.distance_nm <= 0:
+            raise ValueError(f"初始距离必须大于0: {self.distance_nm}")
+        if self.distance_nm > 20:
+            raise ValueError(f"初始距离不应超过20海里: {self.distance_nm}")
+        if self.own_speed <= 0 or self.target_speed <= 0:
+            raise ValueError("船速必须大于0")
+        if self.risk_threshold_warning <= 0 or self.risk_threshold_warning >= 1:
+            raise ValueError(f"预警阈值必须在(0,1)区间: {self.risk_threshold_warning}")
+        if self.risk_threshold_danger <= 0 or self.risk_threshold_danger > 1:
+            raise ValueError(f"危险阈值必须在(0,1]区间: {self.risk_threshold_danger}")
+        if self.risk_threshold_warning >= self.risk_threshold_danger:
+            raise ValueError("预警阈值必须小于危险阈值")
+        if self.safe_distance_nm <= 0:
+            raise ValueError(f"安全距离必须大于0: {self.safe_distance_nm}")
+        if self.safe_time_min <= 0:
+            raise ValueError(f"安全时间必须大于0: {self.safe_time_min}")
+        if not (-90 <= self.base_latitude <= 90):
+            raise ValueError(f"纬度超出范围: {self.base_latitude}")
+        if not (-180 <= self.base_longitude <= 180):
+            raise ValueError(f"经度超出范围: {self.base_longitude}")
+
 
 @dataclass
 class RoughWeatherParams:
