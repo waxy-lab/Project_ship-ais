@@ -415,7 +415,7 @@
     - 支持动态加载自定义算法
     - _Requirements: 8.3_
 
-- [ ] 16. Final Checkpoint - 系统集成测试
+- [*] 16. Final Checkpoint - 系统集成测试
   - 运行完整的端到端测试
   - 验证所有模块协同工作
   - 运行批量场景测试
