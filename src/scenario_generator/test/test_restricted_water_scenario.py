@@ -75,7 +75,9 @@ class TestRestrictedWaterScenario:
         assert len(sc.ships) == 2
 
     def test_own_ship_at_base_position(self, gen):
-        p = RestrictedWaterParams(base_latitude=31.0, base_longitude=121.0)
+        p = RestrictedWaterParams(
+            base_latitude=31.0, base_longitude=121.0, use_irregular_channel=False
+        )
         sc = gen.generate_restricted_water_scenario(p)
         own = sc.ships[0]
         assert abs(own.latitude - 31.0) < 1e-9
@@ -92,12 +94,12 @@ class TestRestrictedWaterScenario:
         assert sc.ships[1].mmsi == 444555666
 
     def test_own_ship_heading_matches_channel(self, gen):
-        p = RestrictedWaterParams(channel_heading=45.0)
+        p = RestrictedWaterParams(channel_heading=45.0, use_irregular_channel=False)
         sc = gen.generate_restricted_water_scenario(p)
         assert abs(sc.ships[0].heading - 45.0) < 1e-9
 
     def test_target_ship_opposite_heading(self, gen):
-        p = RestrictedWaterParams(channel_heading=90.0)
+        p = RestrictedWaterParams(channel_heading=90.0, use_irregular_channel=False)
         sc = gen.generate_restricted_water_scenario(p)
         expected = (90.0 + 180.0) % 360.0
         assert abs(sc.ships[1].heading - expected) < 1e-9
@@ -107,7 +109,8 @@ class TestRestrictedWaterScenario:
         p = RestrictedWaterParams(
             channel_heading=90.0,  # 东向
             separation_nm=1.0,
-            base_latitude=30.0, base_longitude=120.0
+            base_latitude=30.0, base_longitude=120.0,
+            use_irregular_channel=False,
         )
         sc = gen.generate_restricted_water_scenario(p)
         own = sc.ships[0]
@@ -121,7 +124,8 @@ class TestRestrictedWaterScenario:
         p = RestrictedWaterParams(
             channel_heading=0.0,  # 北向
             separation_nm=sep,
-            base_latitude=30.0, base_longitude=120.0
+            base_latitude=30.0, base_longitude=120.0,
+            use_irregular_channel=False,
         )
         sc = gen.generate_restricted_water_scenario(p)
         own = sc.ships[0]
@@ -143,7 +147,13 @@ class TestRestrictedWaterScenario:
         p = RestrictedWaterParams()
         sc = gen.generate_restricted_water_scenario(p)
         assert sc.environment.map_boundaries is not None
-        assert len(sc.environment.map_boundaries) == 4
+        # 弯曲航道为不规则多边形（顶点数 > 4）
+        assert len(sc.environment.map_boundaries) >= 4
+
+    def test_irregular_channel_many_vertices(self, gen):
+        p = RestrictedWaterParams(use_irregular_channel=True)
+        sc = gen.generate_restricted_water_scenario(p)
+        assert len(sc.environment.map_boundaries) >= 8
 
     def test_boundaries_are_tuples(self, gen):
         p = RestrictedWaterParams()

@@ -407,6 +407,44 @@ def is_overtaking_complete(own_ship, target_ship,
     return along_nm > safe_ahead_nm and lateral_nm > safe_lateral_nm
 
 
+def is_avoidance_complete(own_ship, target_ship,
+                          safe_pass_nm: float = 0.5) -> bool:
+    """
+    判断对遇/交叉避让是否已完成：目标船已从本船后方安全通过。
+
+    完成条件：
+    - 目标船在本船正后方（沿本船航向投影为负值，即已超过本船）
+    - 两船距离 > safe_pass_nm 海里（已形成足够安全间距）
+
+    Args:
+        own_ship:      本船状态
+        target_ship:   目标船状态
+        safe_pass_nm:  安全通过距离（海里），默认 0.5nm
+
+    Returns:
+        True 表示避让完成，可以回正航向
+    """
+    NM = 60.0
+    cos_lat = math.cos(math.radians(own_ship.latitude))
+
+    # 本船航向单位向量
+    hdg_rad = math.radians(own_ship.heading)
+    along_north = math.cos(hdg_rad)
+    along_east  = math.sin(hdg_rad)
+
+    # 目标相对本船的位移（海里）
+    dn = (target_ship.latitude  - own_ship.latitude)  * NM
+    de = (target_ship.longitude - own_ship.longitude) * NM * cos_lat
+
+    # 沿本船航向投影（负值 = 目标已在本船后方）
+    along_nm = dn * along_north + de * along_east
+
+    # 两船距离
+    dist_nm = math.hypot(dn, de)
+
+    return along_nm < -0.1 and dist_nm > safe_pass_nm
+
+
 def determine_encounter_type(own_ship, target_ship) -> EncounterType:
     """判定相遇类型
     
@@ -464,6 +502,75 @@ def determine_encounter_type(own_ship, target_ship) -> EncounterType:
     return EncounterType.NONE
 
 
+def apply_restricted_water_rule(own_ship, target_ship) -> 'AvoidanceAction':
+    """
+    Rule 9：狭水道/航道规则
+
+    在受限水域中，船舶应靠近本身右舷的外侧边界行驶，
+    对遇时不应采用大角度右转（航道太窄），而是减速并保持靠右行驶。
+    追越在狭水道中须谨慎，仅在安全时进行。
+
+    Args:
+        own_ship:    本船状态
+        target_ship: 目标船状态
+
+    Returns:
+        AvoidanceAction
+    """
+    enc = determine_encounter_type(own_ship, target_ship)
+    relative_bearing = calculate_relative_bearing(own_ship, target_ship)
+
+    # 对遇：狭水道中靠右各行其道，不大角度转向，减速让对方通过
+    if enc == EncounterType.HEAD_ON:
+        return AvoidanceAction(
+            action_type=ActionType.SPEED_CHANGE,
+            speed_factor=0.5,
+            reason="Rule 9: 狭水道对遇，减速靠右行驶，等待对方通过"
+        )
+
+    # 交叉：狭水道中不应横越，保持航向减速
+    if enc == EncounterType.CROSSING:
+        own_role, _ = determine_vessel_roles(enc, own_ship, target_ship)
+        if own_role == VesselRole.GIVE_WAY:
+            return AvoidanceAction(
+                action_type=ActionType.SPEED_CHANGE,
+                speed_factor=0.6,
+                reason="Rule 9: 狭水道交叉，减速让路"
+            )
+        return AvoidanceAction(
+            action_type=ActionType.MAINTAIN,
+            maintain_course=True,
+            reason="Rule 9: 狭水道交叉，本船直航船，保持航向"
+        )
+
+    # 追越：狭水道追越须谨慎，同样适用 Rule 13
+    if enc == EncounterType.OVERTAKING:
+        own_role, _ = determine_vessel_roles(enc, own_ship, target_ship)
+        if own_role == VesselRole.GIVE_WAY:
+            if is_overtaking_complete(own_ship, target_ship):
+                return AvoidanceAction(
+                    action_type=ActionType.RESUME_COURSE,
+                    reason="Rule 13/9: 狭水道追越完成，回正航向"
+                )
+            return AvoidanceAction(
+                action_type=ActionType.SPEED_CHANGE,
+                speed_factor=0.7,
+                reason="Rule 9/13: 狭水道追越，减速等待安全超越机会"
+            )
+
+    # 无风险或已通过
+    if is_avoidance_complete(own_ship, target_ship):
+        return AvoidanceAction(
+            action_type=ActionType.RESUME_COURSE,
+            reason="Rule 9: 狭水道避让完成，恢复正常航行"
+        )
+    return AvoidanceAction(
+        action_type=ActionType.MAINTAIN,
+        maintain_course=True,
+        reason="Rule 9: 狭水道，保持航向航速"
+    )
+
+
 def determine_vessel_roles(encounter_type: EncounterType, 
                           own_ship, 
                           target_ship) -> tuple[VesselRole, VesselRole]:
@@ -516,13 +623,17 @@ def determine_vessel_roles(encounter_type: EncounterType,
     return (VesselRole.UNDEFINED, VesselRole.UNDEFINED)
 
 
-def apply_colregs_rule(encounter_type: EncounterType, 
-                       own_ship, 
-                       target_ship) -> AvoidanceAction:
+def apply_colregs_rule(encounter_type: EncounterType,
+                       own_ship,
+                       target_ship,
+                       environment=None) -> AvoidanceAction:
     """应用COLREGS规则，返回避让动作
-    
+
     根据相遇类型应用相应的COLREGS规则，生成避让动作。
-    
+    environment 为 EnvironmentConfig 对象，传入时根据天气/能见度调整策略：
+    - 恶劣天气：增大避让角度（风流导致实际轨迹偏移，需更大余量）
+    - 能见度不良：Rule 19，雾中减速，避让角度更大更保守
+
     规则应用逻辑：
     1. 对遇（Rule 14）：双方向右转向
     2. 交叉相遇（Rule 15/17）：
@@ -541,12 +652,49 @@ def apply_colregs_rule(encounter_type: EncounterType,
         
     Requirements: 3.1-3.6
     """
-    # 无相遇风险：检查是否刚完成追越，若是则发出回正指令
+    # ---------- 环境因素：根据天气/能见度调整避让角度 ----------
+    _env_turn_bonus = 0.0    # 额外转向角度（度）
+    _env_speed_factor = 1.0  # 速度修正系数
+    _fog_mode = False        # 能见度不良模式（Rule 19）
+
+    if environment is not None:
+        from scenario_generator.models import WeatherCondition, Visibility
+        wc = getattr(environment, 'weather_condition', None)
+        vis = getattr(environment, 'visibility', None)
+        wind_spd = getattr(environment, 'wind_speed', 0.0)     # m/s
+        cur_spd  = getattr(environment, 'current_speed', 0.0)  # m/s
+
+        # 恶劣天气：风速 > 10m/s 或天气 rough，增大避让角度
+        if (wc == WeatherCondition.ROUGH or wind_spd > 10.0):
+            _env_turn_bonus += 10.0   # 额外10°，补偿风流漂移
+            _env_speed_factor = 0.85  # 略微减速
+        elif (wc == WeatherCondition.MODERATE or wind_spd > 5.0):
+            _env_turn_bonus += 5.0
+            _env_speed_factor = 0.92
+
+        # 能见度不良：Rule 19，雾中保守操作
+        if vis == Visibility.POOR:
+            _env_turn_bonus += 15.0   # 更大避让角度
+            _env_speed_factor = min(_env_speed_factor, 0.7)  # 减速至安全速度
+            _fog_mode = True
+        elif vis == Visibility.MODERATE:
+            _env_turn_bonus += 8.0
+            _env_speed_factor = min(_env_speed_factor, 0.85)
+
+    # ---------- COLREGS 规则判定 ----------
+    # 无相遇风险：检查是否刚完成避让，若是则发出回正指令
     if encounter_type == EncounterType.NONE:
+        # 追越完成回正
         if is_overtaking_complete(own_ship, target_ship):
             return AvoidanceAction(
                 action_type=ActionType.RESUME_COURSE,
                 reason="Rule 13: 追越完成，本船已超过目标船并保持安全间距，回正航向"
+            )
+        # 对遇/交叉避让完成：目标船已通过且横向间距足够，回正
+        if is_avoidance_complete(own_ship, target_ship):
+            return AvoidanceAction(
+                action_type=ActionType.RESUME_COURSE,
+                reason="避让完成，目标船已安全通过，回正至原始航向"
             )
         return AvoidanceAction(
             action_type=ActionType.NO_ACTION,
@@ -556,12 +704,28 @@ def apply_colregs_rule(encounter_type: EncounterType,
     
     # 对遇（Rule 14）：双方向右转向
     if encounter_type == EncounterType.HEAD_ON:
-        return AvoidanceAction(
+        angle = TURN_ANGLE_HEAD_ON + _env_turn_bonus
+        reason = "Rule 14: 对遇局面，向右转向"
+        if _fog_mode:
+            reason = "Rule 19: 能见度不良对遇，大幅右转并减速"
+        elif _env_turn_bonus > 0:
+            reason = f"Rule 14: 对遇局面，恶劣天气增大转向角至{angle:.0f}°"
+        action = AvoidanceAction(
             action_type=ActionType.COURSE_CHANGE,
             turn_direction=TurnDirection.STARBOARD,
-            turn_angle=TURN_ANGLE_HEAD_ON,
-            reason="Rule 14: 对遇局面，向右转向"
+            turn_angle=angle,
+            reason=reason
         )
+        # 能见度不良/恶劣天气同时减速
+        if _env_speed_factor < 1.0:
+            return AvoidanceAction(
+                action_type=ActionType.COURSE_CHANGE,
+                turn_direction=TurnDirection.STARBOARD,
+                turn_angle=angle,
+                speed_factor=_env_speed_factor,
+                reason=reason
+            )
+        return action
     
     # 交叉相遇（Rule 15/17）：判断让路船和直航船
     if encounter_type == EncounterType.CROSSING:
@@ -570,11 +734,18 @@ def apply_colregs_rule(encounter_type: EncounterType,
         
         if own_role == VesselRole.GIVE_WAY:
             # 让路船：采取明显避让行动（大角度右转）
+            angle = TURN_ANGLE_CROSSING_GIVE_WAY + _env_turn_bonus
+            reason = "Rule 15: 交叉相遇，本船为让路船，采取明显避让行动"
+            if _fog_mode:
+                reason = f"Rule 19/15: 能见度不良交叉，大幅右转{angle:.0f}°并减速"
+            elif _env_turn_bonus > 0:
+                reason = f"Rule 15: 交叉相遇，恶劣天气增大转向角至{angle:.0f}°"
             return AvoidanceAction(
                 action_type=ActionType.COURSE_CHANGE,
                 turn_direction=TurnDirection.STARBOARD,
-                turn_angle=TURN_ANGLE_CROSSING_GIVE_WAY,
-                reason="Rule 15: 交叉相遇，本船为让路船，采取明显避让行动"
+                turn_angle=angle,
+                speed_factor=_env_speed_factor if _env_speed_factor < 1.0 else None,
+                reason=reason
             )
         elif own_role == VesselRole.STAND_ON:
             # 直航船：保持航向和航速
