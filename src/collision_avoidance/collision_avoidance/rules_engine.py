@@ -33,7 +33,7 @@ RELATIVE_BEARING_OVERTAKING = 112.5     # 追越：后方扇形区域边界（22
 # COLREGS规则要求的避让角度（度）
 TURN_ANGLE_HEAD_ON = 15.0          # 对遇：向右转向角度
 TURN_ANGLE_CROSSING_GIVE_WAY = 30.0  # 交叉让路船：大角度避让
-TURN_ANGLE_OVERTAKING = 20.0       # 追越：避让角度
+TURN_ANGLE_OVERTAKING = 40.0       # 追越：避让角度（大角度确保绕开）
 
 # 速度调整因子
 SPEED_REDUCTION_FACTOR = 0.7       # 减速避让：速度降至70%
@@ -105,6 +105,7 @@ class ActionType(Enum):
     COMBINED = "combined"            # 组合动作
     MAINTAIN = "maintain"            # 保持航向航速
     NO_ACTION = "no_action"          # 无需动作
+    RESUME_COURSE = "resume_course"  # 回正航向（追越完成后恢复原航向）
 
 
 # ============================================================================
@@ -363,6 +364,49 @@ def is_crossing_from_starboard(relative_bearing: float) -> bool:
 # 核心功能函数（待实现）
 # ============================================================================
 
+
+def is_overtaking_complete(own_ship, target_ship,
+                           safe_lateral_nm: float = 0.3,
+                           safe_ahead_nm: float = 0.1) -> bool:
+    """
+    判断追越是否已完成：本船已超过目标船并保持足够横向间距。
+
+    完成条件（同时满足）：
+    1. 本船在目标船前方（沿目标船航向投影，本船超前 safe_ahead_nm 海里）
+    2. 本船与目标船横向间距 > safe_lateral_nm 海里（已离开目标船航迹线）
+
+    Args:
+        own_ship:        本船状态
+        target_ship:     目标船状态
+        safe_lateral_nm: 安全横向间距（海里），默认 0.3nm
+        safe_ahead_nm:   超前距离（海里），默认 0.1nm
+
+    Returns:
+        True 表示追越完成，可以回正航向
+    """
+    NM = 60.0  # 1度纬度 ≈ 60海里
+    cos_lat = math.cos(math.radians(target_ship.latitude))
+
+    # 目标船航向单位向量（NE坐标系，北=y，东=x）
+    hdg_rad = math.radians(target_ship.heading)
+    along_north = math.cos(hdg_rad)   # 北向分量
+    along_east  = math.sin(hdg_rad)   # 东向分量
+    # 横向（右舷正方向）
+    perp_north = -math.sin(hdg_rad)
+    perp_east  =  math.cos(hdg_rad)
+
+    # 本船相对目标船的位移（海里，北为正，东为正）
+    dn = (own_ship.latitude  - target_ship.latitude)  * NM
+    de = (own_ship.longitude - target_ship.longitude) * NM * cos_lat
+
+    # 沿目标航向投影（正值 = 本船在目标前方）
+    along_nm = dn * along_north + de * along_east
+    # 横向间距（绝对值）
+    lateral_nm = abs(dn * perp_north + de * perp_east)
+
+    return along_nm > safe_ahead_nm and lateral_nm > safe_lateral_nm
+
+
 def determine_encounter_type(own_ship, target_ship) -> EncounterType:
     """判定相遇类型
     
@@ -387,10 +431,22 @@ def determine_encounter_type(own_ship, target_ship) -> EncounterType:
     heading_diff = calculate_heading_difference(own_ship.heading, target_ship.heading)
     
     # 1. 追越判定（优先级最高）
-    # 追越：目标船在本船后方22.5度扇形区域内（即相对方位大于112.5度或小于-112.5度）
-    # 且本船速度大于目标船速度
-    if (abs(relative_bearing) > RELATIVE_BEARING_OVERTAKING and 
-        own_ship.speed > target_ship.speed):
+    # COLREGS Rule 13：追越船定义为「从被追越船正后方22.5度以内的任何方向追及他船」
+    # 两种等价几何：
+    #   a) 目标在本船后方（目标追本船）：abs(relative_bearing) > 112.5 且目标更快
+    #   b) 目标在本船前方（本船追目标）：abs(relative_bearing) < 67.5 且两船同向 且本船更快
+    #      — 此时从目标视角看本船在目标后方22.5扇区内，本船是追越船，需主动避让
+    
+    # 情形 a：目标从后方追来，目标是追越船（本船被追越，直航船）
+    if (abs(relative_bearing) > RELATIVE_BEARING_OVERTAKING and
+            target_ship.speed > own_ship.speed):
+        return EncounterType.OVERTAKING
+    
+    # 情形 b：本船从后方追目标，本船是追越船（需让路）
+    # 条件：目标在本船前方扇区（abs(bearing) < 67.5°）、同向（heading_diff < 30°）、本船更快
+    if (abs(relative_bearing) < (180.0 - RELATIVE_BEARING_OVERTAKING) and
+            heading_diff < 30.0 and
+            own_ship.speed > target_ship.speed + 0.5):
         return EncounterType.OVERTAKING
     
     # 2. 对遇判定
@@ -485,8 +541,13 @@ def apply_colregs_rule(encounter_type: EncounterType,
         
     Requirements: 3.1-3.6
     """
-    # 无相遇风险：无需动作
+    # 无相遇风险：检查是否刚完成追越，若是则发出回正指令
     if encounter_type == EncounterType.NONE:
+        if is_overtaking_complete(own_ship, target_ship):
+            return AvoidanceAction(
+                action_type=ActionType.RESUME_COURSE,
+                reason="Rule 13: 追越完成，本船已超过目标船并保持安全间距，回正航向"
+            )
         return AvoidanceAction(
             action_type=ActionType.NO_ACTION,
             no_action=True,
@@ -536,12 +597,23 @@ def apply_colregs_rule(encounter_type: EncounterType,
         own_role, target_role = determine_vessel_roles(encounter_type, own_ship, target_ship)
         
         if own_role == VesselRole.GIVE_WAY:
-            # 本船是追越船，需要避让
+            # 本船是追越船
+            # 先检查是否已完成超越，若是则回正航向（类似汽车超车后并回原车道）
+            if is_overtaking_complete(own_ship, target_ship):
+                return AvoidanceAction(
+                    action_type=ActionType.RESUME_COURSE,
+                    reason="Rule 13: 追越完成，本船已超过目标船并保持安全间距，回正航向"
+                )
+            
+            # 尚未完成超越，需要避让转向
             # 计算相对方位，决定从哪一侧避让
             relative_bearing = calculate_relative_bearing(own_ship, target_ship)
             
-            # 如果目标船在左后方，向左避让；如果在右后方，向右避让
-            if relative_bearing < 0:
+            # 目标在前方：向右舷绕行（标准追越避让，从目标右侧超越）
+            # 目标在右方：向左避让；目标在左方：向右避让
+            if abs(relative_bearing) < 67.5:  # 目标在前方，标准追越
+                turn_dir = TurnDirection.STARBOARD
+            elif relative_bearing < 0:
                 turn_dir = TurnDirection.PORT
             else:
                 turn_dir = TurnDirection.STARBOARD

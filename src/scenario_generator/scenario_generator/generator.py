@@ -96,7 +96,9 @@ class OvertakingParams:
     base_longitude: float = 120.0  # 基准经度
     mmsi1: int = 123456789       # 追越船 MMSI
     mmsi2: int = 987654321       # 被追越船 MMSI
-    
+    # 仿真时长（秒）；<=0 时按「初始间距/相对速度」自动估算并留余量，保证能完成追越
+    duration_sec: float = 0.0
+
     def __post_init__(self):
         """参数验证"""
         if self.distance <= 0:
@@ -203,6 +205,8 @@ class RestrictedWaterParams:
     duration: float = 400.0          # 场景时长（秒）
     separation_nm: float = 1.0       # 初始船间距（海里）
     scenario_id: Optional[str] = None
+    # True：沿中心线弯曲的狭水道（不规则多边形），更贴近实际；False：直矩形航道（便于单元测试）
+    use_irregular_channel: bool = True
 
     def __post_init__(self):
         if self.channel_width_nm <= 0:
@@ -518,14 +522,23 @@ class ScenarioGenerator:
         
         # 生成场景ID
         scenario_id = f"overtaking_{uuid.uuid4().hex[:8]}"
-        
+
+        # 追越所需时间 ≈ 初始间距(nm) / 相对速度(kn)，换算为秒并留余量（完成并排+超越）
+        rel_spd = max(params.speed1 - params.speed2, 0.1)
+        if params.duration_sec and params.duration_sec > 0:
+            dur = float(params.duration_sec)
+        else:
+            hours = params.distance / rel_spd
+            dur = hours * 3600.0 * 1.35 + 120.0
+            dur = max(dur, 900.0)
+
         # 创建场景配置
         scenario = ScenarioConfig(
             scenario_id=scenario_id,
             scenario_type=ScenarioType.OVERTAKING,
             ships=[ship1, ship2],
             environment=self.environment,
-            duration=600.0,  # 默认10分钟
+            duration=dur,
             success_criteria={
                 'min_distance': 0.5,  # 最小距离0.5海里
                 'collision_avoided': True
@@ -934,21 +947,21 @@ class ScenarioGenerator:
 
         在狭窄航道中生成对遇场景，船舶限制在航道宽度内行驶。
         Requirements: 2.3
-
-        Args:
-            params: RestrictedWaterParams 参数
-        Returns:
-            ScenarioConfig，包含水域边界约束信息
         """
+        if params.use_irregular_channel:
+            return self._generate_restricted_water_irregular(params)
+        return self._generate_restricted_water_rectangular(params)
+
+    def _generate_restricted_water_rectangular(
+            self, params: RestrictedWaterParams) -> ScenarioConfig:
+        """直矩形航道（与早期单元测试几何一致）。"""
         scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
         nm = self.NAUTICAL_MILE_TO_DEGREE
         hdg_rad = math.radians(params.channel_heading)
 
-        # 沿航道方向的单位向量
-        along_x = math.sin(hdg_rad)   # 经度方向
-        along_y = math.cos(hdg_rad)   # 纬度方向
+        along_x = math.sin(hdg_rad)
+        along_y = math.cos(hdg_rad)
 
-        # 本船：在航道中央，朝航道方向行驶
         own_ship = ShipState(
             mmsi=params.own_mmsi,
             latitude=params.base_latitude,
@@ -958,7 +971,6 @@ class ScenarioGenerator:
             rot=0.0,
         )
 
-        # 目标船：在本船前方 separation_nm 处，朝相反方向行驶
         sep = params.separation_nm
         lat_lat_corr = max(math.cos(math.radians(params.base_latitude)), 1e-6)
         target_ship = ShipState(
@@ -971,26 +983,22 @@ class ScenarioGenerator:
         )
         ships = [own_ship, target_ship]
 
-        # 计算航道边界（左右各 channel_width/2）
         half_w = params.channel_width_nm / 2.0
         perp_rad = math.radians(params.channel_heading + 90.0)
         perp_x = math.sin(perp_rad)
         perp_y = math.cos(perp_rad)
 
-        # 用四个角点定义航道边界（map_boundaries）
         half_l = params.channel_length_nm / 2.0
         corners = []
-        for al in [-half_l, half_l]:
-            for pe in [-half_w, half_w]:
-                clat = (params.base_latitude
-                        + along_y * al * nm
-                        + perp_y * pe * nm)
-                clon = (params.base_longitude
-                        + along_x * al * nm / lat_lat_corr
-                        + perp_x * pe * nm / lat_lat_corr)
-                corners.append((clat, clon))
+        for al, pe in [(-half_l, -half_w), (-half_l, half_w), (half_l, half_w), (half_l, -half_w)]:
+            clat = (params.base_latitude
+                    + along_y * al * nm
+                    + perp_y * pe * nm)
+            clon = (params.base_longitude
+                    + along_x * al * nm / lat_lat_corr
+                    + perp_x * pe * nm / lat_lat_corr)
+            corners.append((clat, clon))
 
-        # 始终创建受限水域环境（除非外部传入了自定义环境）
         if self.environment.water_area_type == WaterAreaType.OPEN:
             env = EnvironmentConfig(
                 water_area_type=WaterAreaType.RESTRICTED,
@@ -1000,9 +1008,136 @@ class ScenarioGenerator:
             env = self.environment
 
         description = (
-            f"受限水域场景: 航道宽度={params.channel_width_nm:.1f}nm"
+            f"受限水域场景(直航道): 航道宽度={params.channel_width_nm:.1f}nm"
             f", 长度={params.channel_length_nm:.1f}nm"
             f", 航向={params.channel_heading:.0f}°"
+        )
+        return ScenarioConfig(
+            scenario_id=scenario_id,
+            scenario_type=ScenarioType.HEAD_ON,
+            ships=ships,
+            environment=env,
+            duration=params.duration,
+            description=description,
+        )
+
+    def _generate_restricted_water_irregular(
+            self, params: RestrictedWaterParams) -> ScenarioConfig:
+        """
+        弯曲狭水道：中心线带横向正弦偏移，左右边界形成不规则多边形；
+        本船/目标置于中心线上，航向为局部切向。
+        """
+        scenario_id = params.scenario_id or str(uuid.uuid4())[:8]
+        nm = self.NAUTICAL_MILE_TO_DEGREE
+        hdg_rad = math.radians(params.channel_heading)
+        along_x = math.sin(hdg_rad)
+        along_y = math.cos(hdg_rad)
+        perp_rad = math.radians(params.channel_heading + 90.0)
+        perp_x = math.sin(perp_rad)
+        perp_y = math.cos(perp_rad)
+        lat_corr = max(math.cos(math.radians(params.base_latitude)), 1e-6)
+
+        half_l = params.channel_length_nm / 2.0
+        half_w = params.channel_width_nm / 2.0
+        n = 14
+        centers = []
+        for k in range(n):
+            t = k / (n - 1) if n > 1 else 0.0
+            along_nm = -half_l + t * params.channel_length_nm
+            # 横向摆动（海里），幅度与长度成比，形成 S 弯
+            lateral_nm = 0.14 * params.channel_length_nm * math.sin(2.0 * math.pi * t)
+            clat = (params.base_latitude
+                    + along_y * along_nm * nm
+                    + perp_y * lateral_nm * nm)
+            clon = (params.base_longitude
+                    + along_x * along_nm * nm / lat_corr
+                    + perp_x * lateral_nm * nm / lat_corr)
+            centers.append((clat, clon))
+
+        def tangent_bearing(k: int) -> float:
+            if k == 0:
+                dlat = centers[1][0] - centers[0][0]
+                dlon = centers[1][1] - centers[0][1]
+            elif k == n - 1:
+                dlat = centers[k][0] - centers[k - 1][0]
+                dlon = centers[k][1] - centers[k - 1][1]
+            else:
+                dlat = centers[k + 1][0] - centers[k - 1][0]
+                dlon = centers[k + 1][1] - centers[k - 1][1]
+            dn = dlat * 60.0
+            de = dlon * lat_corr * 60.0
+            return math.degrees(math.atan2(de, dn)) % 360.0
+
+        def offset_nm(clat: float, clon: float, bearing_deg: float, dist_nm: float) -> tuple:
+            br = math.radians(bearing_deg)
+            dlat = dist_nm * math.cos(br) / 60.0
+            dlon = dist_nm * math.sin(br) / (60.0 * lat_corr)
+            return clat + dlat, clon + dlon
+
+        left_bnd = []
+        right_bnd = []
+        for k in range(n):
+            clat, clon = centers[k]
+            tb = tangent_bearing(k)
+            l_lat, l_lon = offset_nm(clat, clon, (tb - 90.0) % 360.0, half_w)
+            r_lat, r_lon = offset_nm(clat, clon, (tb + 90.0) % 360.0, half_w)
+            left_bnd.append((l_lat, l_lon))
+            right_bnd.append((r_lat, r_lon))
+
+        corners = left_bnd + list(reversed(right_bnd))
+
+        # 本船靠近航道一端，目标在下游对遇：沿中心线弧长选点
+        def nm_dist(a, b):
+            dlat = (b[0] - a[0]) * 60.0
+            dlon = (b[1] - a[1]) * lat_corr * 60.0
+            return math.hypot(dlat, dlon)
+
+        cum = [0.0]
+        for k in range(1, n):
+            cum.append(cum[-1] + nm_dist(centers[k - 1], centers[k]))
+
+        k_own = 2
+        k_tgt = k_own + 1
+        while k_tgt < n and (cum[k_tgt] - cum[k_own]) < params.separation_nm - 1e-6:
+            k_tgt += 1
+        if k_tgt >= n:
+            k_tgt = n - 1
+
+        own_lat, own_lon = centers[k_own]
+        tgt_lat, tgt_lon = centers[k_tgt]
+        hdg_own = tangent_bearing(k_own)
+        hdg_tgt = (tangent_bearing(k_tgt) + 180.0) % 360.0
+
+        own_ship = ShipState(
+            mmsi=params.own_mmsi,
+            latitude=own_lat,
+            longitude=own_lon,
+            heading=hdg_own,
+            sog=params.own_speed,
+            rot=0.0,
+        )
+        target_ship = ShipState(
+            mmsi=params.target_mmsi,
+            latitude=tgt_lat,
+            longitude=tgt_lon,
+            heading=hdg_tgt,
+            sog=params.target_speed,
+            rot=0.0,
+        )
+        ships = [own_ship, target_ship]
+
+        if self.environment.water_area_type == WaterAreaType.OPEN:
+            env = EnvironmentConfig(
+                water_area_type=WaterAreaType.RESTRICTED,
+                map_boundaries=corners,
+            )
+        else:
+            env = self.environment
+
+        description = (
+            f"受限水域场景(弯曲狭水道): 宽度={params.channel_width_nm:.1f}nm"
+            f", 长度={params.channel_length_nm:.1f}nm"
+            f", 参考航向={params.channel_heading:.0f}°"
         )
         return ScenarioConfig(
             scenario_id=scenario_id,

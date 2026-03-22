@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>海事碰撞避免系统 — 可视化演示</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;600&display=swap');
+
+  :root {
+    --bg:       #080e1a;
+    --panel:    #0d1626;
+    --border:   #1a2e4a;
+    --accent:   #00d4ff;
+    --accent2:  #00ff9d;
+    --warn:     #ffb800;
+    --danger:   #ff3b5c;
+    --safe:     #00ff9d;
+    --text:     #c8daea;
+    --muted:    #4a6a8a;
+    --mono:     'JetBrains Mono', monospace;
+    --sans:     'Noto Sans SC', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 52px 1fr;
+    grid-template-columns: 280px 1fr 300px;
+    grid-template-areas:
+      "header header header"
+      "left   map    right";
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    grid-area: header;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+  }
+  header .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  header .logo span { color: var(--accent2); }
+  header .divider { flex: 1; }
+  header .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background .3s;
+  }
+  header .status-dot.running { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+  header .status-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  /* ── Left Panel ── */
+  .left-panel {
+    grid-area: left;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 14px 16px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* scenario list */
+  .scenario-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+  .scenario-list::-webkit-scrollbar { width: 4px; }
+  .scenario-list::-webkit-scrollbar-track { background: transparent; }
+  .scenario-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .scenario-item {
+    padding: 10px 16px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all .15s;
+  }
+  .scenario-item:hover { background: rgba(0,212,255,.06); border-left-color: var(--accent); }
+  .scenario-item.active { background: rgba(0,212,255,.10); border-left-color: var(--accent); }
+  .scenario-item .s-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+  .scenario-item.active .s-label { color: var(--accent); }
+  .scenario-item .s-desc {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* controls */
+  .ctrl-area {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .btn {
+    width: 100%;
+    padding: 9px 0;
+    border: none;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all .15s;
+  }
+  .btn-start {
+    background: var(--accent);
+    color: #000;
+  }
+  .btn-start:hover { background: #33deff; }
+  .btn-start:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-stop {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
+  .btn-stop:hover { background: rgba(255,59,92,.1); }
+  .btn-stop:disabled { opacity: .3; cursor: not-allowed; }
+
+  .speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  .speed-row input[type=range] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 3px;
+  }
+  .speed-val { color: var(--accent); min-width: 28px; text-align: right; }
+
+  /* ── Map ── */
+  .map-area {
+    grid-area: map;
+    position: relative;
+    overflow: hidden;
+    background: #060d18;
+  }
+  #mapCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .map-overlay {
+    position: absolute;
+    top: 12px; left: 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: rgba(0,212,255,.5);
+    letter-spacing: 1px;
+    pointer-events: none;
+  }
+  .tick-counter {
+    position: absolute;
+    bottom: 14px; right: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .tick-counter span { color: var(--accent); }
+
+  /* ── Right Panel ── */
+  .right-panel {
+    grid-area: right;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* risk cards */
+  .risk-cards {
+    flex: 0 0 auto;
+    overflow-y: auto;
+    max-height: 45%;
+    padding: 8px 12px;
+  }
+  .risk-card {
+    background: rgba(255,255,255,.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: border-color .3s;
+  }
+  .risk-card.safe   { border-color: rgba(0,255,157,.2); }
+  .risk-card.warning { border-color: rgba(255,184,0,.4); }
+  .risk-card.danger  { border-color: rgba(255,59,92,.6); background: rgba(255,59,92,.04); }
+
+  .risk-card .rc-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 7px;
+  }
+  .rc-mmsi { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .rc-level {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 3px;
+  }
+  .rc-level.safe    { background: rgba(0,255,157,.12); color: var(--safe); }
+  .rc-level.warning { background: rgba(255,184,0,.15); color: var(--warn); }
+  .rc-level.danger  { background: rgba(255,59,92,.15); color: var(--danger); }
+
+  .rc-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .rc-metric {
+    display: flex;
+    flex-direction: column;
+  }
+  .rc-metric .m-label { font-size: 9px; color: var(--muted); font-family: var(--mono); letter-spacing: .5px; }
+  .rc-metric .m-val   { font-size: 14px; font-family: var(--mono); font-weight: 600; color: var(--text); }
+
+  .cri-bar-wrap {
+    height: 3px;
+    background: rgba(255,255,255,.06);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .cri-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width .4s ease, background .4s;
+  }
+
+  .encounter-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .5px;
+    padding: 2px 6px;
+    background: rgba(0,212,255,.08);
+    color: var(--accent);
+    border-radius: 2px;
+    margin-top: 6px;
+    margin-right: 4px;
+  }
+  .action-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .5px;
+    padding: 2px 6px;
+    background: rgba(0,255,157,.08);
+    color: var(--accent2);
+    border-radius: 2px;
+    margin-top: 6px;
+  }
+
+  /* event log */
+  .event-log {
+    flex: 1;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+    padding: 8px 12px;
+  }
+  .event-log::-webkit-scrollbar { width: 4px; }
+  .event-log::-webkit-scrollbar-track { background: transparent; }
+  .event-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .event-log .el-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding-bottom: 8px;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+  }
+  .event-item {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,.03);
+    line-height: 1.5;
+  }
+  .event-item.ev-avoidance { color: var(--accent2); }
+  .event-item.ev-danger    { color: var(--danger); }
+  .event-item.ev-start     { color: var(--accent); }
+  .event-item.ev-stop      { color: var(--muted); }
+  .event-item.ev-complete  { color: var(--warn); }
+  .event-item.ev-default   { color: var(--muted); }
+
+  /* env info strip */
+  .env-strip {
+    border-top: 1px solid var(--border);
+    padding: 8px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .env-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .5px;
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--muted);
+  }
+
+  /* ── Pulse animation for danger ── */
+  @keyframes pulse-danger {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,92,0); }
+    50%       { box-shadow: 0 0 0 4px rgba(255,59,92,.25); }
+  }
+  .risk-card.danger { animation: pulse-danger 1.5s infinite; }
+
+  /* ── Intro overlay ── */
+  #intro {
+    position: absolute;
+    inset: 0;
+    background: rgba(8,14,26,.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    pointer-events: none;
+    transition: opacity .4s;
+    z-index: 10;
+  }
+  #intro.hidden { opacity: 0; pointer-events: none; }
+  #intro .intro-icon { font-size: 48px; }
+  #intro .intro-text {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  /* scrollbars */
+  .risk-cards::-webkit-scrollbar { width: 4px; }
+  .risk-cards::-webkit-scrollbar-track { background: transparent; }
+  .risk-cards::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">AIS<span>·</span>COLREGS <span>可视化演示</span></div>
+  <div class="divider"></div>
+  <div class="status-dot" id="statusDot"></div>
+  <div class="status-text" id="statusText">IDLE</div>
+</header>
+
+<!-- Left: scenario selector -->
+<div class="left-panel">
+  <div class="panel-title">选择场景</div>
+  <div class="scenario-list" id="scenarioList">
+    {% for key, s in scenarios.items() %}
+    <div class="scenario-item" data-key="{{ key }}">
+      <div class="s-label">{{ s.label }}</div>
+      <div class="s-desc">{{ s.desc }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="ctrl-area">
+    <div class="speed-row">
+      <span>速度</span>
+      <input type="range" id="speedSlider" min="1" max="16" value="8" step="1"
+             oninput="document.getElementById('speedVal').textContent=this.value+'x'">
+      <span class="speed-val" id="speedVal">8x</span>
+    </div>
+    <button class="btn btn-start" id="btnStart" onclick="startSim()">▶ 开始仿真</button>
+    <button class="btn btn-stop"  id="btnStop"  onclick="stopSim()" disabled>■ 停止</button>
+  </div>
+</div>
+
+<!-- Center: canvas map -->
+<div class="map-area">
+  <canvas id="mapCanvas"></canvas>
+  <div class="map-overlay" id="mapOverlay">AIS · MARITIME COLLISION AVOIDANCE</div>
+  <div class="tick-counter">仿真时刻 <span id="tickDisplay">0</span> s</div>
+  <div id="intro">
+    <div class="intro-icon">⚓</div>
+    <div class="intro-text">选择左侧场景并点击开始仿真</div>
+  </div>
+</div>
+
+<!-- Right: risk cards + event log -->
+<div class="right-panel">
+  <div class="panel-title">碰撞风险评估</div>
+  <div class="risk-cards" id="riskCards"></div>
+  <div class="env-strip" id="envStrip"></div>
+  <div class="event-log">
+    <div class="el-title">事件日志</div>
+    <div id="eventItems"></div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────
+// 使用 var + 唯一变量名，避免与历史重复 let 声明冲突；EventSource 连接
+var selectedScenario = null;
+var eventSource = null;
+var lastState = null;
+
+// ─────────────────────────────────────────────
+// Canvas setup
+// ─────────────────────────────────────────────
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const el = canvas.parentElement;
+  canvas.width  = el.clientWidth  * devicePixelRatio;
+  canvas.height = el.clientHeight * devicePixelRatio;
+  canvas.style.width  = el.clientWidth  + 'px';
+  canvas.style.height = el.clientHeight + 'px';
+  if (lastState) renderFrame(lastState);
+  else drawGrid();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function drawGrid() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const grad = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.7);
+  grad.addColorStop(0,'#0a1628'); grad.addColorStop(1,'#040a12');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(0,100,180,0.08)'; ctx.lineWidth=1;
+  for(let x=0;x<W;x+=60){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=60){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  drawCompass(W-50,H-50,36);
+}
+
+function drawCompass(cx,cy,r){
+  ctx.save();
+  ctx.strokeStyle='rgba(0,212,255,0.15)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+  [['N',0],['E',90],['S',180],['W',270]].forEach(([l,d])=>{
+    const rad=(d-90)*Math.PI/180;
+    ctx.fillStyle=l==='N'?'rgba(0,212,255,0.6)':'rgba(0,212,255,0.25)';
+    ctx.font=`${10*devicePixelRatio}px JetBrains Mono`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(l,cx+Math.cos(rad)*(r+12),cy+Math.sin(rad)*(r+12));
+  });
+  ctx.restore();
+}
+
+function getProjection(ships,mapPolygon){
+  if(!ships||!ships.length)return null;
+  const lats=ships.map(s=>s.latitude),lons=ships.map(s=>s.longitude);
+  if(mapPolygon&&mapPolygon.length){
+    mapPolygon.forEach(p=>{
+      const la=Array.isArray(p)?p[0]:p.lat,lo=Array.isArray(p)?p[1]:p.lon;
+      if(la!=null&&lo!=null){lats.push(la);lons.push(lo);}
+    });
+  }
+  const minLat=Math.min(...lats),maxLat=Math.max(...lats);
+  const minLon=Math.min(...lons),maxLon=Math.max(...lons);
+  const pad=0.05;
+  const latR=Math.max(maxLat-minLat,0.05)+pad*2;
+  const lonR=Math.max(maxLon-minLon,0.05)+pad*2;
+  const W=canvas.width,H=canvas.height,m=60*devicePixelRatio;
+  const scale=Math.min((W-m*2)/lonR,(H-m*2)/latR);
+  const cLat=(minLat+maxLat)/2,cLon=(minLon+maxLon)/2;
+  return(lat,lon)=>[W/2+(lon-cLon)*scale, H/2-(lat-cLat)*scale];
+}
+
+function drawMapPolygon(proj, mapPolygon){
+  if(!mapPolygon||mapPolygon.length<3)return;
+  const r=devicePixelRatio;
+  ctx.save();
+  ctx.beginPath();
+  mapPolygon.forEach((p,i)=>{
+    const la=Array.isArray(p)?p[0]:p.lat,lo=Array.isArray(p)?p[1]:p.lon;
+    if(la==null||lo==null)return;
+    const[x,y]=proj(la,lo);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.closePath();
+  ctx.fillStyle='rgba(0,212,255,0.07)';
+  ctx.fill();
+  ctx.strokeStyle='rgba(0,212,255,0.42)';
+  ctx.lineWidth=1.5*r;
+  ctx.setLineDash([5*r,4*r]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+const TRAILS={};
+const TRAIL_LEN=40;
+
+function renderFrame(state){
+  const ships=state.ships||[],risks=state.risks||[];
+  const mapPolygon=state.map_polygon||null;
+  drawGrid();
+  if(!ships.length)return;
+  const proj=getProjection(ships,mapPolygon);
+  if(!proj)return;
+  drawMapPolygon(proj,mapPolygon);
+
+  // risk lines
+  risks.forEach(r=>{
+    const tgt=ships[r.target_idx],own=ships[0];
+    if(!tgt||!own)return;
+    const[ox,oy]=proj(own.latitude,own.longitude);
+    const[tx,ty]=proj(tgt.latitude,tgt.longitude);
+    ctx.save();
+    ctx.setLineDash([4*devicePixelRatio,4*devicePixelRatio]);
+    ctx.strokeStyle=r.risk_level==='danger'?'rgba(255,59,92,0.35)'
+      :r.risk_level==='warning'?'rgba(255,184,0,0.25)':'rgba(0,212,255,0.10)';
+    ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(tx,ty);ctx.stroke();
+    ctx.restore();
+    if(r.risk_level!=='safe'){
+      const c=r.risk_level==='danger'?'255,59,92':'255,184,0';
+      const g=ctx.createRadialGradient(tx,ty,0,tx,ty,24*devicePixelRatio);
+      g.addColorStop(0,`rgba(${c},0.18)`);g.addColorStop(1,`rgba(${c},0)`);
+      ctx.beginPath();ctx.arc(tx,ty,24*devicePixelRatio,0,Math.PI*2);
+      ctx.fillStyle=g;ctx.fill();
+    }
+  });
+
+  // trails
+  ships.forEach(ship=>{
+    const[px,py]=proj(ship.latitude,ship.longitude);
+    if(!TRAILS[ship.mmsi])TRAILS[ship.mmsi]=[];
+    const trail=TRAILS[ship.mmsi];
+    trail.push({x:px,y:py});
+    if(trail.length>TRAIL_LEN)trail.shift();
+    if(trail.length>1){
+      ctx.save();
+      for(let i=1;i<trail.length;i++){
+        const a=(i/trail.length)*0.5;
+        ctx.beginPath();ctx.moveTo(trail[i-1].x,trail[i-1].y);ctx.lineTo(trail[i].x,trail[i].y);
+        ctx.strokeStyle=ship.is_own?`rgba(0,212,255,${a})`:`rgba(255,184,0,${a*0.7})`;
+        ctx.lineWidth=1.5;ctx.stroke();
+      }
+      ctx.restore();
+    }
+  });
+
+  // ships
+  const nShips=ships.length;
+  ships.forEach((ship,idx)=>{
+    const[px,py]=proj(ship.latitude,ship.longitude);
+    const risk=risks.find(r=>r.target_idx===idx);
+    const level=risk?risk.risk_level:'safe';
+    drawShip(px,py,ship.heading,ship.is_own,level,ship.label||`${ship.mmsi}`,ship.sog,
+      ship.target_heading!==null&&ship.target_heading!==undefined,idx,nShips);
+  });
+}
+
+function drawShip(px,py,heading,isOwn,level,label,speed,maneuvering,labelIdx,shipCount){
+  const r=devicePixelRatio;
+  ctx.save();
+  ctx.translate(px,py);
+  ctx.rotate(heading*Math.PI/180);
+  const sz=isOwn?14*r:11*r;
+  const color=isOwn?'#00d4ff':level==='danger'?'#ff3b5c':level==='warning'?'#ffb800':'#00ff9d';
+  ctx.beginPath();
+  ctx.moveTo(0,-sz);ctx.lineTo(sz*0.5,sz*0.6);ctx.lineTo(0,sz*0.3);ctx.lineTo(-sz*0.5,sz*0.6);
+  ctx.closePath();
+  ctx.fillStyle=color+(isOwn?'ff':'cc');ctx.fill();
+  ctx.strokeStyle='#ffffff22';ctx.lineWidth=1;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-sz);ctx.lineTo(0,-sz-22*r);
+  ctx.strokeStyle=color+'88';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.restore();
+  if(maneuvering){
+    ctx.save();ctx.beginPath();ctx.arc(px,py,18*r,0,Math.PI*2);
+    ctx.strokeStyle='rgba(0,255,157,0.5)';ctx.lineWidth=1.5;
+    ctx.setLineDash([3*r,3*r]);ctx.stroke();ctx.restore();
+  }
+  ctx.save();
+  ctx.font=`${10*r}px JetBrains Mono`;ctx.textAlign='center';
+  const n=Math.max(shipCount||1,1);
+  const i=labelIdx|0;
+  let lx=px,ly1=py+18*r,ly2=py+28*r;
+  if(n>=3){
+    const t=-Math.PI/2+(2*Math.PI*i)/n;
+    const lr=50*r;
+    lx=px+Math.cos(t)*lr;
+    ly1=py+Math.sin(t)*lr-6*r;
+    ly2=ly1+11*r;
+  }
+  ctx.textBaseline='top';
+  ctx.fillStyle=isOwn?'rgba(0,212,255,0.9)':'rgba(255,255,255,0.6)';
+  ctx.fillText(label,lx,ly1);
+  ctx.fillStyle=isOwn?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.3)';
+  ctx.fillText(`${speed.toFixed(1)} kn`,lx,ly2);
+  ctx.restore();
+}
+
+function updateRiskCards(risks){
+  const el=document.getElementById('riskCards');
+  if(!risks||!risks.length){el.innerHTML='<div style="font-size:11px;color:var(--muted);padding:12px 0;font-family:var(--mono)">暂无风险目标</div>';return;}
+  el.innerHTML=risks.map(r=>{
+    const pct=Math.round(r.cri*100);
+    const bc=r.risk_level==='danger'?'var(--danger)':r.risk_level==='warning'?'var(--warn)':'var(--safe)';
+    const enc={head_on:'对遇 Rule14',crossing:'交叉 Rule15',overtaking:'追越 Rule13',none:'无风险'}[r.encounter_type]||r.encounter_type;
+    const act={course_change:'转向避让',maintain:'保持航向',speed_change:'减速',combined:'综合避让',no_action:'无动作'}[r.action_type]||r.action_type;
+    const dir=r.turn_direction==='starboard'?'→右':r.turn_direction==='port'?'←左':'';
+    const ang=r.turn_angle?` ${r.turn_angle}°`:'';
+    return `<div class="risk-card ${r.risk_level}">
+      <div class="rc-header"><span class="rc-mmsi">目标 ${r.target_mmsi}</span><span class="rc-level ${r.risk_level}">${r.risk_level.toUpperCase()}</span></div>
+      <div class="rc-metrics">
+        <div class="rc-metric"><span class="m-label">DCPA</span><span class="m-val">${r.dcpa.toFixed(2)}<small style="font-size:10px;color:var(--muted)"> nm</small></span></div>
+        <div class="rc-metric"><span class="m-label">TCPA</span><span class="m-val">${r.tcpa.toFixed(1)}<small style="font-size:10px;color:var(--muted)"> min</small></span></div>
+        <div class="rc-metric"><span class="m-label">CRI</span><span class="m-val" style="color:${bc}">${r.cri.toFixed(3)}</span></div>
+        <div class="rc-metric"><span class="m-label">距离</span><span class="m-val">${r.distance.toFixed(2)}<small style="font-size:10px;color:var(--muted)"> nm</small></span></div>
+      </div>
+      <div class="cri-bar-wrap"><div class="cri-bar" style="width:${pct}%;background:${bc}"></div></div>
+      <span class="encounter-badge">${enc}</span><span class="action-badge">${act}${dir}${ang}</span>
+    </div>`;
+  }).join('');
+}
+
+function updateEvents(events){
+  const el=document.getElementById('eventItems');
+  if(!events||!events.length){el.innerHTML='';return;}
+  el.innerHTML=events.map(e=>{
+    let cls='ev-default';
+    if(e.includes('[避碰]'))cls='ev-avoidance';
+    else if(e.includes('[危险]'))cls='ev-danger';
+    else if(e.includes('[开始]'))cls='ev-start';
+    else if(e.includes('[停止]')||e.includes('[完成]'))cls='ev-stop';
+    return `<div class="event-item ${cls}">${e}</div>`;
+  }).join('');
+}
+
+function selectScenario(key){
+  selectedScenario=key;
+  document.querySelectorAll('.scenario-item').forEach(el=>el.classList.toggle('active',el.dataset.key===key));
+}
+const firstItem=document.querySelector('.scenario-item');
+if(firstItem)selectScenario(firstItem.dataset.key);
+
+const scenarioList=document.getElementById('scenarioList');
+if(scenarioList){
+  scenarioList.addEventListener('click',function(ev){
+    const item=ev.target.closest('.scenario-item');
+    if(item&&item.dataset.key)selectScenario(item.dataset.key);
+  });
+}
+
+function startSim(){
+  if(!selectedScenario){alert('请先选择场景');return;}
+  Object.keys(TRAILS).forEach(k=>delete TRAILS[k]);
+  const speed=parseInt(document.getElementById('speedSlider').value);
+  fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({scenario:selectedScenario,speed})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){alert('启动失败: '+d.error);return;}
+    document.getElementById('intro').classList.add('hidden');
+    setRunning(true);connectSSE();
+  });
+}
+
+function stopSim(){
+  fetch('/api/stop',{method:'POST'}).then(()=>setRunning(false));
+  if(eventSource){eventSource.close();eventSource=null;}
+}
+
+function setRunning(r){
+  document.getElementById('statusDot').className='status-dot'+(r?' running':'');
+  document.getElementById('statusText').textContent=r?'RUNNING':'IDLE';
+  document.getElementById('btnStart').disabled=r;
+  document.getElementById('btnStop').disabled=!r;
+}
+
+function connectSSE(){
+  if(eventSource)eventSource.close();
+  eventSource=new EventSource('/stream');
+  eventSource.onmessage=ev=>{
+    let state;try{state=JSON.parse(ev.data);}catch(e){return;}
+    if(state.ping)return;
+    lastState=state;
+    renderFrame(state);
+    updateRiskCards(state.risks);
+    updateEvents(state.events);
+    document.getElementById('tickDisplay').textContent=state.tick;
+    if(!state.running){setRunning(false);eventSource.close();eventSource=null;}
+  };
+  eventSource.onerror=()=>{if(eventSource){eventSource.close();eventSource=null;}};
+}
+
+drawGrid();
+</script>
+</body>
+</html>
