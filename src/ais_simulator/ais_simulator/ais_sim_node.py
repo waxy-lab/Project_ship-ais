@@ -13,8 +13,8 @@ import random
 from shapely.geometry import Point, Polygon
 
 from ais_simulator.map_loader import MapLoader
-from ais_simulator.msg import AisShip, AisShipList
-from collision_avoidance.msg import ControlCommand
+from ais_msgs.msg import AisShip, AisShipList
+from ais_msgs.msg import ControlCommand
 
 class AisSimulatorNode(Node):
     #初始化相关属性

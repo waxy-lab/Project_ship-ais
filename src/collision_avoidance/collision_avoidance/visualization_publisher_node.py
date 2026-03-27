@@ -15,7 +15,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import String
 
-from ais_simulator.msg import AisShipList
+from ais_msgs.msg import AisShipList
 from collision_avoidance.risk_assessment import assess_collision_risk
 from scenario_generator.models import ShipState
 

@@ -12,9 +12,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import String
-from collision_avoidance.msg import ControlCommand
+from ais_msgs.msg import ControlCommand
 
-from ais_simulator.msg import AisShipList  # AisShip unused
+from ais_msgs.msg import AisShipList  # AisShip unused
 
 from collision_avoidance.risk_assessment import (
     assess_collision_risk,

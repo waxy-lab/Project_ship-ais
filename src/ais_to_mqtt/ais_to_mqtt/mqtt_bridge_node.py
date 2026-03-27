@@ -12,10 +12,10 @@ class MqttBridgeNode(Node):
         super().__init__('mqtt_bridge_node')
 
         # 声明 ROS 2 参数
-        self.declare_parameter('broker_address', '60.205.13.156')
-        self.declare_parameter('broker_port', 1883)
-        self.declare_parameter('username', 'Drone/1hbahhhckc4ky')
-        self.declare_parameter('password', 'tonzajuxhvmr')
+        self.declare_parameter('broker_address', '127.0.0.1')
+        self.declare_parameter('broker_port', 1884)
+        self.declare_parameter('username', '')
+        self.declare_parameter('password', '')
         self.declare_parameter('client_id', 'waxy_ais_test')
         self.declare_parameter('mqtt_topic', 'drone/ais/data')
 

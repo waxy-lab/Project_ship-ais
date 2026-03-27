@@ -4,17 +4,14 @@
   <name>ais_simulator</name>
   <version>0.0.0</version>
   <description>AIS Data Simulator</description>
-  <maintainer email="user@todo.todo">waxy</maintainer>
+  <maintainer email="waxy@todo.todo">waxy</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>std_msgs</depend>
   <depend>rclpy</depend>
-  <depend>collision_avoidance</depend>
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>std_msgs</depend>
+  <depend>ais_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

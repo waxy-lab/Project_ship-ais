@@ -27,7 +27,8 @@ setup(
             'mqtt_bridge = ais_to_mqtt.mqtt_bridge_node:main',
             'ais_file_test = ais_to_mqtt.ais_file_test_node:main',
             'ais_reader = ais_to_mqtt.ais_reader_node:main',
-            'analyzeData = ais_to_mqtt.analyzeData:main'
+            'analyzeData = ais_to_mqtt.analyzeData:main',
+            'ais_to_lan = ais_to_mqtt.ais_to_lan_node:main'
         ],
     },
 )

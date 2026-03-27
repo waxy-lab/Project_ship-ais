@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional
 
 import rclpy
 from rclpy.node import Node
+from ais_msgs.msg import AisShipList
 from std_msgs.msg import String
 
 from .data_models import (
@@ -42,7 +43,7 @@ class DataLoggerNode(Node):
 
         # 订阅 AIS 船舶状态 Requirements: 9.1
         self._sub_ais = self.create_subscription(
-            String, '/ais/ship_states',
+            AisShipList, '/ais/ship_states',
             self._ais_callback, 10)
 
         # 订阅避碰决策 Requirements: 9.2
@@ -62,21 +63,19 @@ class DataLoggerNode(Node):
         self.get_logger().info(
             f'DataLoggerNode 启动，输出目录: {output_dir}')
 
-    def _ais_callback(self, msg: String):
+    def _ais_callback(self, msg):
         """处理 AIS 数据 Requirements: 9.1"""
         try:
-            data = json.loads(msg.data)
             now = time.time()
-            ships = data.get('ships', [])
-            for ship in ships:
+            for ship in msg.ships:
                 record = AisRecord(
                     timestamp=now,
-                    mmsi=ship.get('mmsi', 0),
-                    latitude=ship.get('latitude', 0.0),
-                    longitude=ship.get('longitude', 0.0),
-                    heading=ship.get('heading', 0.0),
-                    sog=ship.get('sog', 0.0),
-                    rot=ship.get('rot', 0.0),
+                    mmsi=int(ship.mmsi),
+                    latitude=float(ship.latitude),
+                    longitude=float(ship.longitude),
+                    heading=float(ship.heading),
+                    sog=float(ship.sog),
+                    rot=float(ship.rot),
                 )
                 self._store.add_ais(record)
         except Exception as e:
