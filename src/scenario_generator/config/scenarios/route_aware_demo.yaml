@@ -1,0 +1,69 @@
+scenario_id: route_aware_demo
+scenario_type: route_aware
+description: 基于主航线的综合会遇示例，展示对遇、右舷交叉和追越三类 encounter。
+duration: 900.0
+map_path: src/ais_simulator/config/jamaica_bay.geojson
+
+environment:
+  weather_condition: calm
+  visibility: good
+  water_area_type: open
+  wind_speed: 2.0
+  wind_direction: 45.0
+  current_speed: 0.3
+  current_direction: 90.0
+
+own_ship:
+  mmsi: 123456789
+  latitude: 40.60169
+  longitude: -73.86977
+  heading: 31.0
+  sog: 18.0
+  rot: 0.0
+  role: own_ship
+  collision_avoidance_enabled: true
+
+own_ship_route:
+  - [40.61303, -73.86079]
+  - [40.61593, -73.85144]
+  - [40.61749, -73.84691]
+  - [40.61776, -73.83890]
+  - [40.62226, -73.83672]
+  - [40.62785, -73.83617]
+  - [40.63650, -73.83820]
+  - [40.64120, -73.83280]
+  - [40.64280, -73.82126]
+
+encounters:
+  - type: overtaking
+    title: 同向慢船追越
+    anchor:
+      route_progress: 0.15
+    start_time: 0.0
+    end_time: 180.0
+    target_mmsi: 987654323
+    target_speed: 12.0
+    relative_distance_nm: 0.25
+    route_id: own_route_segment_1
+
+  - type: crossing
+    title: 右舷交叉来船
+    anchor:
+      route_progress: 0.48
+    start_time: 70.0
+    target_mmsi: 987654322
+    target_speed: 14.0
+    crossing_side: starboard
+    crossing_angle: 90.0
+    relative_distance_nm: 0.35
+    route_id: own_route_segment_2
+
+  - type: head_on
+    title: 前方对遇船
+    anchor:
+      route_progress: 0.78
+    start_time: 150.0
+    target_mmsi: 987654321
+    target_speed: 16.0
+    relative_distance_nm: 0.45
+    route_id: own_route_segment_3

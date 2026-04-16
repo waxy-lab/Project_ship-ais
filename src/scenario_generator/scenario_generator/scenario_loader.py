@@ -17,13 +17,18 @@ from .generator import (
     MultiShipParams,
     EmergencyParams
 )
+from .route_scenario_generator import RouteScenarioGenerator
 from .models import (
     ScenarioConfig,
     ScenarioType,
     EnvironmentConfig,
     WeatherCondition,
     Visibility,
-    WaterAreaType
+    WaterAreaType,
+    RouteScenarioConfig,
+    RouteSegmentRef,
+    EncounterSpec,
+    ShipState,
 )
 
 
@@ -85,6 +90,51 @@ class ScenarioLoader:
         scenario_type_str = config.get('scenario_type')
         if not scenario_type_str:
             raise ValueError("配置文件缺少 'scenario_type' 字段")
+
+        if scenario_type_str == ScenarioType.ROUTE_AWARE.value:
+            env_config = config.get('environment', {})
+            environment = EnvironmentConfig(
+                weather_condition=WeatherCondition(env_config.get('weather_condition', 'calm')),
+                visibility=Visibility(env_config.get('visibility', 'good')),
+                water_area_type=WaterAreaType(env_config.get('water_area_type', 'open')),
+                wind_speed=env_config.get('wind_speed', 0.0),
+                wind_direction=env_config.get('wind_direction', 0.0),
+                current_speed=env_config.get('current_speed', 0.0),
+                current_direction=env_config.get('current_direction', 0.0),
+                map_boundaries=env_config.get('map_boundaries')
+            )
+            own_ship = ShipState.from_dict(config['own_ship'])
+            encounters = []
+            for item in config.get('encounters', []):
+                anchor_data = item.get('anchor', {})
+                encounters.append(EncounterSpec(
+                    encounter_type=ScenarioType(item['type']),
+                    anchor=RouteSegmentRef(
+                        route_progress=anchor_data.get('route_progress'),
+                        route_segment_index=anchor_data.get('route_segment_index'),
+                    ),
+                    start_time=item.get('start_time', 0.0),
+                    end_time=item.get('end_time'),
+                    target_speed=item.get('target_speed', 10.0),
+                    target_mmsi=item.get('target_mmsi', 987654321),
+                    crossing_side=item.get('crossing_side', 'starboard'),
+                    crossing_angle=item.get('crossing_angle', 90.0),
+                    relative_distance_nm=item.get('relative_distance_nm', 0.4),
+                    safe_separation_nm=item.get('safe_separation_nm', 0.1),
+                    route_id=item.get('route_id'),
+                    title=item.get('title', ''),
+                ))
+            route_config = RouteScenarioConfig(
+                scenario_id=config.get('scenario_id', filename.rsplit('.', 1)[0]),
+                own_ship=own_ship,
+                own_ship_route=config['own_ship_route'],
+                encounters=encounters,
+                environment=environment,
+                duration=config.get('duration', 600.0),
+                description=config.get('description', ''),
+                map_path=config.get('map_path'),
+            )
+            return RouteScenarioGenerator().generate(route_config)
         
         # 解析环境配置
         env_config = config.get('environment', {})

@@ -16,9 +16,13 @@ from .models import (
     WeatherCondition,
     Visibility,
     WaterAreaType,
+    ShipRole,
     ShipState,
     EnvironmentConfig,
-    ScenarioConfig
+    ScenarioConfig,
+    RouteSegmentRef,
+    EncounterSpec,
+    RouteScenarioConfig,
 )
 
 from .generator import (
@@ -34,6 +38,7 @@ from .generator import (
     PoorVisibilityParams
 )
 
+from .route_scenario_generator import RouteScenarioGenerator
 from .scenario_loader import ScenarioLoader
 
 __all__ = [
@@ -41,9 +46,13 @@ __all__ = [
     'WeatherCondition',
     'Visibility',
     'WaterAreaType',
+    'ShipRole',
     'ShipState',
     'EnvironmentConfig',
     'ScenarioConfig',
+    'RouteSegmentRef',
+    'EncounterSpec',
+    'RouteScenarioConfig',
     'ScenarioGenerator',
     'HeadOnParams',
     'CrossingParams',
@@ -54,5 +63,6 @@ __all__ = [
     'RestrictedWaterParams',
     'RoughWeatherParams',
     'PoorVisibilityParams',
+    'RouteScenarioGenerator',
     'ScenarioLoader'
 ]

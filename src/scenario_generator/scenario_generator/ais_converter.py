@@ -36,8 +36,18 @@ class AISConfigConverter:
                 'longitude': ship.longitude,
                 'heading': ship.heading,
                 'sog': ship.sog,
-                'rot': ship.rot
+                'rot': ship.rot,
+                'start_time': ship.start_time,
+                'collision_avoidance_enabled': ship.collision_avoidance_enabled,
+                'role': ship.role.value,
             }
+
+            if ship.end_time is not None:
+                ship_config['end_time'] = ship.end_time
+            if ship.encounter_type:
+                ship_config['encounter_type'] = ship.encounter_type
+            if ship.route_id:
+                ship_config['route_id'] = ship.route_id
             
             # 如果有航点，添加航点信息
             if ship.waypoints:

@@ -30,11 +30,18 @@ from collision_avoidance.path_planning import (
     plan_return_path,
     ReturnPathConfig,
 )
-from scenario_generator.models import ShipState, EnvironmentConfig
+from scenario_generator.models import ShipState, EnvironmentConfig, ShipRole
 
 
 def _ais_msg_to_ship_state(msg):
     try:
+        role_value = ShipRole.OTHER
+        if hasattr(msg, 'role') and msg.role:
+            try:
+                role_value = ShipRole(msg.role)
+            except ValueError:
+                role_value = ShipRole.OTHER
+        collision_avoidance_enabled = getattr(msg, 'collision_avoidance_enabled', False)
         return ShipState(
             mmsi=int(msg.mmsi),
             latitude=float(msg.latitude),
@@ -42,6 +49,8 @@ def _ais_msg_to_ship_state(msg):
             heading=float(msg.heading) % 360.0,
             sog=float(msg.sog),
             rot=float(msg.rot),
+            role=role_value,
+            collision_avoidance_enabled=collision_avoidance_enabled,
         )
     except (ValueError, AttributeError):
         return None
@@ -134,13 +143,16 @@ class CollisionAvoidanceNode(Node):
             self.get_logger().warning("收到空的 AIS 列表，跳过本次更新。")
             return
         self._ship_list = ships
-        if self._own_ship_mmsi == 0:
-            self._own_ship = ships[0]
-        else:
+        own_candidates = [s for s in ships if s.role == ShipRole.OWN_SHIP]
+        if self._own_ship_mmsi:
             matched = [s for s in ships if s.mmsi == self._own_ship_mmsi]
             self._own_ship = matched[0] if matched else None
             if self._own_ship is None:
                 self.get_logger().warning(f"未找到 MMSI={self._own_ship_mmsi} 的本船。")
+        elif own_candidates:
+            self._own_ship = own_candidates[0]
+        else:
+            self._own_ship = ships[0]
         if self._own_ship is not None and self._original_heading is None:
             self._original_heading = self._own_ship.heading
             self._original_speed = self._own_ship.sog
@@ -152,7 +164,10 @@ class CollisionAvoidanceNode(Node):
         if self._own_ship is None:
             return
         own = self._own_ship
-        targets = [s for s in self._ship_list if s.mmsi != own.mmsi]
+        targets = [
+            s for s in self._ship_list
+            if s.mmsi != own.mmsi and s.role != ShipRole.OWN_SHIP
+        ]
         now = time.time()
 
         # Requirements 3.1: 无目标船时发布安全状态

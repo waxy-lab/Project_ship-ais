@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
 import math
-import serial  # 用于串口通信
-import pyais.messages as ais_messages # 用于创建AIS消息
-from pyais.encode import encode_msg   # 用于编码NMEA
-import yaml
 import os
-import math
-from ament_index_python.packages import get_package_share_directory
 import random
-from shapely.geometry import Point, Polygon
+
+import pyais.messages as ais_messages  # 用于创建AIS消息
+import rclpy
+import serial  # 用于串口通信
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from pyais.encode import encode_msg   # 用于编码NMEA
+from rclpy.node import Node
+from shapely.geometry import Point
 
 from ais_simulator.map_loader import MapLoader
 from ais_msgs.msg import AisShip, AisShipList
@@ -31,21 +31,24 @@ class AisSimulatorNode(Node):
         self.output_port_name = self.get_parameter('output_port').get_parameter_value().string_value
 
         # 加载模拟船只配置
-        self.declare_parameter('ships_configs', 'ships_config.yaml')
-        config_file = self.get_parameter('ships_configs').get_parameter_value().string_value
+        self.declare_parameter('ships_configs', '')
+        ships_config_param = self.get_parameter('ships_configs').get_parameter_value().string_value
 
         # 加载地图配置
         self.declare_parameter('map_path', '')
         map_path_param = self.get_parameter('map_path').get_parameter_value().string_value
 
+        target_ships_config = ships_config_param if ships_config_param else default_ships
+
         self.startup_ok = False
+        self._scenario_time = 0.0
         # 地球半径 (米)
         self.EARTH_RADIUS_METERS = 6371e3
         self.SAFETY_DISTANCE = 0.001 #110m左右的安全距离
 
         try:
             #读取船舶配置
-            self.simulated_ships = self.load_ship_configs(default_ships)
+            self.simulated_ships = self.load_ship_configs(target_ships_config)
             if not self.simulated_ships:
                 self.get_logger().error('没有加载到任何船只配置，节点将退出。')
                 rclpy.shutdown()
@@ -110,6 +113,14 @@ class AisSimulatorNode(Node):
                 valid_ships = []
                 for ship in config['simulated_ships']:
                     if all(k in ship for k in ['mmsi', 'latitude', 'longitude', 'heading', 'sog', 'rot']):
+                        ship.setdefault('start_time', 0.0)
+                        ship.setdefault('end_time', None)
+                        ship.setdefault('role', 'other')
+                        ship.setdefault('encounter_type', None)
+                        ship.setdefault('collision_avoidance_enabled', False)
+                        ship.setdefault('route_id', None)
+                        ship.setdefault('_started', False)
+                        ship.setdefault('_ended', False)
                         valid_ships.append(ship)
                     else:
                         self.get_logger().warning(f"船只配置 {ship} 缺少关键字段，已被跳过。")
@@ -122,22 +133,57 @@ class AisSimulatorNode(Node):
             # 如果文件找不到，或者 YAML 解析失败，都会被捕获
             self.get_logger().error(f"无法加载或解析船舶配置文件 '{filename}'。错误: {e}")
             raise # 重新抛出异常，让 __init__ 退出
+
+    def _is_ship_active(self, ship_state):
+        current_time = self._scenario_time
+        start_time = float(ship_state.get('start_time', 0.0))
+        end_time = ship_state.get('end_time', None)
+
+        if current_time < start_time:
+            return False
+
+        if end_time is not None and current_time >= float(end_time):
+            if not ship_state.get('_ended', False):
+                ship_state['_ended'] = True
+                ship_state['sog'] = 0.0
+                ship_state['rot'] = 0.0
+                ship_state.pop('target_heading', None)
+                self.get_logger().info(
+                    f"MMSI {ship_state['mmsi']} 到达 end_time={end_time}，停止运动。"
+                )
+            return False
+
+        if not ship_state.get('_started', False):
+            ship_state['_started'] = True
+            self.get_logger().info(
+                f"MMSI {ship_state['mmsi']} 在 t={current_time:.1f}s 开始运动。"
+            )
+
+        return True
     
     #定时器的主回调函数，每秒执行一次。
     def timer_callback(self):
+        self._scenario_time += self.timer_period
+
         # 遍历我们内部列表中的每一艘船
         for ship_state in self.simulated_ships:
+            if not self._is_ship_active(ship_state):
+                continue
+
             # 优先应用来自避碰决策节点的控制指令
             mmsi = ship_state['mmsi']
             if mmsi in self._control_commands:
                 self._apply_control_command(ship_state, self._control_commands[mmsi])
-            else:
-                # 回退到原有的简单避碰逻辑
+            elif ship_state.get('collision_avoidance_enabled', False):
+                # 启用避碰控制的船舶才使用回退避碰逻辑
                 self.avoid_collision_with_other_ships(ship_state, self.simulated_ships)
+
             # 更新这艘船的状态 (推算1秒后的位置)
             self.update_ship_state(ship_state)
+
             # 将状态编码为NMEA句子并发送
             self.generate_and_send_nmea(ship_state)
+
         # 发布所有船舶状态到 /ais/ship_states
         self._publish_ship_states()
 
@@ -152,7 +198,6 @@ class AisSimulatorNode(Node):
     def _apply_control_command(self, ship_state, cmd):
         """将控制指令应用到船舶状态 Requirements: 5.5"""
         import math as _math
-        nan = float('nan')
         # 应用目标航向
         if not _math.isnan(cmd.target_heading):
             ship_state['target_heading'] = float(cmd.target_heading)
@@ -187,6 +232,8 @@ class AisSimulatorNode(Node):
             ship_msg.rot = float(ship.get('rot', 0.0))
             ship_msg.length = float(ship.get('length', 50.0))
             ship_msg.width = float(ship.get('width', 10.0))
+            ship_msg.role = str(ship.get('role', 'other'))
+            ship_msg.collision_avoidance_enabled = bool(ship.get('collision_avoidance_enabled', False))
             msg.ships.append(ship_msg)
         self._pub_ship_states.publish(msg)
 
@@ -239,6 +286,8 @@ class AisSimulatorNode(Node):
         for other_ship in all_ships:
             if current_ship is other_ship:
                 continue
+            if not self._is_ship_active(other_ship):
+                continue
             
             #检测两船间的距离
             distance = self.calculate_distance(
@@ -277,11 +326,16 @@ class AisSimulatorNode(Node):
             )
         
             # 2. 判断到达 (200米左右)
-            if dist_to_target < 0.002: 
+            if dist_to_target < 0.003: 
                 self.get_logger().info(f"MMSI {ship_state['mmsi']} 到达航点，切换下一个！")
                 ship_state['waypoints'].pop(0)
                 if len(ship_state['waypoints']) > 0:
                     target_lat, target_lon = ship_state['waypoints'][0] # 更新为新目标
+                else:
+                    ship_state['sog'] = 0.0
+                    ship_state['rot'] = 0.0
+                    ship_state.pop('target_heading', None)
+                    self.get_logger().info(f"MMSI {ship_state['mmsi']} 已到达终点，停止航行。")
             
             # 3. 实时计算目标方位角 (Target Heading)
             if len(ship_state['waypoints']) > 0:
@@ -299,7 +353,7 @@ class AisSimulatorNode(Node):
             
             # 简单的 P 控制器：偏差越大，转得越快
             # 限制最大转向率为 10.0 度/分钟 (模拟正常航行时的转向)
-            nav_rot = max(-10.0, min(10.0, diff * 0.5))
+            nav_rot = max(-90.0, min(90.0, diff * 3.0))
             
             # 应用导航指令 (稍后可能会被避障逻辑覆盖)
             ship_state['rot'] = nav_rot
@@ -308,8 +362,9 @@ class AisSimulatorNode(Node):
         # 第三步：物理状态更新预备
         # ==========================================
         # 1. 随机扰动 (模拟风浪)
-        drift = random.uniform(-0.5, 0.5)
-        if random.random() < 0.05: drift += random.uniform(-2.0, 2.0)
+        drift = random.uniform(-0.1, 0.1)
+        if random.random() < 0.02:
+            drift += random.uniform(-0.5, 0.5)
 
         # 2. 准备计算参数
         # 注意：这里我们使用刚才计算出的 nav_rot 来更新航向
@@ -346,7 +401,7 @@ class AisSimulatorNode(Node):
             # 发现 5秒后可能出界，且当前不是在做剧烈转向 (ROT < 5.0)
             # 这意味着：如果“正常导航”会导致出界，我们就“覆盖”它
             if abs(ship_state['rot']) < 5.0: 
-                soft_turn = random.choice([3.0, -3.0]) # 柔和避让
+                soft_turn = random.choice([10.0, -10.0])
                 ship_state['rot'] = soft_turn 
                 self.get_logger().info(f"MMSI {ship_state['mmsi']}: 预判触岸，覆盖导航指令，执行柔和转向。")
 
@@ -369,7 +424,7 @@ class AisSimulatorNode(Node):
             
             # 强制大角度转向，完全接管控制权
             if abs(ship_state['rot']) < 10.0:
-                hard_turn = random.choice([15.0, -15.0])
+                hard_turn = random.choice([35.0, -35.0])
                 ship_state['rot'] = hard_turn 
             
             # 不更新位置 (原地停一帧旋转)

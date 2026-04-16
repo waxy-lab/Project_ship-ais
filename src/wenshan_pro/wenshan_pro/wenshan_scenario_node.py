@@ -27,7 +27,7 @@ def list_scenarios():
     return scenarios
 
 
-def run_scenario(scenario_name: str, output_path: str = None):
+def run_scenario(scenario_name: str, output_path: str = None, sync_install: bool = True):
     """加载场景并转换为 AIS 模拟器配置"""
     # 确保 scenario_generator 包可以被找到
     sg_path = str(ws_src / 'scenario_generator')
@@ -64,11 +64,14 @@ def run_scenario(scenario_name: str, output_path: str = None):
     import shutil
     ws_root = ws_src.parent
     install_config = ws_root / 'install' / 'ais_simulator' / 'share' / 'ais_simulator' / 'config' / 'ships_config.yaml'
-    if install_config.parent.exists():
-        shutil.copy2(output, str(install_config))
-        print(f"已同步到安装目录: {install_config}")
+    if sync_install and install_config.parent.exists():
+        if Path(output).resolve() == install_config.resolve():
+            print(f"(输出文件已在安装目录，跳过同步: {install_config})")
+        else:
+            shutil.copy2(output, str(install_config))
+            print(f"已同步到安装目录: {install_config}")
     else:
-        print(f"(安装目录不存在，跳过同步: {install_config})")
+        print(f"(安装目录不存在或已禁用同步，跳过同步: {install_config})")
 
     print("现在可以启动 AIS 模拟器:")
     print("  python3 -m ais_simulator.ais_sim_node --ros-args -p output_port:=/dev/pts/X")
@@ -79,13 +82,14 @@ def main():
     parser.add_argument('scenario', nargs='?', help='场景文件名 (如 wenshan_head_on.yaml)')
     parser.add_argument('-l', '--list', action='store_true', help='列出所有场景')
     parser.add_argument('-o', '--output', help='AIS配置输出路径')
+    parser.add_argument('--no-sync-install', action='store_true', help='不自动同步到 install 目录')
     args = parser.parse_args()
 
     if args.list or not args.scenario:
         list_scenarios()
         return
 
-    run_scenario(args.scenario, args.output)
+    run_scenario(args.scenario, args.output, sync_install=not args.no_sync_install)
 
 
 if __name__ == '__main__':

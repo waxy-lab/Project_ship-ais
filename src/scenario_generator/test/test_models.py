@@ -481,17 +481,18 @@ class TestScenarioConfig:
                 duration=-100.0
             )
     
-    def test_invalid_duration_too_long(self):
-        """测试持续时间过长"""
+    def test_duration_can_exceed_two_hours(self):
+        """测试较长持续时间仍然允许，用于兼容长时追越场景"""
         ships = self.create_valid_ships(2)
-        
-        with pytest.raises(ValueError, match="场景持续时间不应超过2小时"):
-            ScenarioConfig(
-                scenario_id="test_001",
-                scenario_type=ScenarioType.HEAD_ON,
-                ships=ships,
-                duration=7201.0
-            )
+
+        scenario = ScenarioConfig(
+            scenario_id="test_001",
+            scenario_type=ScenarioType.HEAD_ON,
+            ships=ships,
+            duration=7201.0
+        )
+
+        assert scenario.duration == 7201.0
     
     def test_invalid_duplicate_mmsi(self):
         """测试重复的MMSI"""

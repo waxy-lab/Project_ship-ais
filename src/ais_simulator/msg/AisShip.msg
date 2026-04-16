@@ -10,3 +10,5 @@ float32 sog         # 航速 (Speed Over Ground, 节)
 float32 rot         # 转向率 (Rate of Turn, 度/分钟)
 float32 length      # 船长 (米)
 float32 width       # 船宽 (米)
+string role         # 船舶角色: own_ship / target_ship / other
+bool collision_avoidance_enabled  # 是否启用避碰控制

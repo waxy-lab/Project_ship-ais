@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Any
 from enum import Enum
 import math
 
@@ -17,6 +17,7 @@ class ScenarioType(Enum):
     OVERTAKING = "overtaking"     # 追越
     MULTI_SHIP = "multi_ship"     # 多船复杂场景
     EMERGENCY = "emergency"       # 紧急场景
+    ROUTE_AWARE = "route_aware"   # 基于主航线的综合场景
 
 
 class WeatherCondition(Enum):
@@ -31,6 +32,13 @@ class Visibility(Enum):
     GOOD = "good"           # 良好
     MODERATE = "moderate"   # 中等
     POOR = "poor"           # 不良
+
+
+class ShipRole(Enum):
+    """船舶角色枚举"""
+    OWN_SHIP = "own_ship"
+    TARGET_SHIP = "target_ship"
+    OTHER = "other"
 
 
 class WaterAreaType(Enum):
@@ -58,6 +66,12 @@ class ShipState:
     navigation_status: str = "under_way_using_engine"  # 航行状态
     timestamp: float = 0.0       # 时间戳
     waypoints: Optional[List[List[float]]] = None  # 航点列表 [[lat, lon], ...]
+    start_time: float = 0.0
+    end_time: Optional[float] = None
+    role: ShipRole = ShipRole.OTHER
+    encounter_type: Optional[str] = None
+    collision_avoidance_enabled: bool = False
+    route_id: Optional[str] = None
     
     # 兼容性属性：提供 speed 和 rate_of_turn 别名
     @property
@@ -125,6 +139,13 @@ class ShipState:
             # 验证航迹向范围
             if not (0 <= self.course < 360):
                 raise ValueError(f"航迹向必须在0到360之间: {self.course}")
+
+        if self.start_time < 0:
+            raise ValueError(f"start_time不能为负数: {self.start_time}")
+        if self.end_time is not None and self.end_time < self.start_time:
+            raise ValueError(
+                f"end_time({self.end_time}) 不能小于 start_time({self.start_time})"
+            )
         
         # 验证航点列表格式
         if self.waypoints is not None:
@@ -139,7 +160,7 @@ class ShipState:
                 if not (-180 <= lon <= 180):
                     raise ValueError(f"航点{i}经度超出范围: {lon}")
     
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式，兼容现有代码"""
         result = {
             'mmsi': self.mmsi,
@@ -148,14 +169,25 @@ class ShipState:
             'heading': self.heading,
             'sog': self.sog,
             'rot': self.rot,
+            'start_time': self.start_time,
+            'collision_avoidance_enabled': self.collision_avoidance_enabled,
+            'role': self.role.value,
         }
+        if self.end_time is not None:
+            result['end_time'] = self.end_time
+        if self.encounter_type:
+            result['encounter_type'] = self.encounter_type
+        if self.route_id:
+            result['route_id'] = self.route_id
         if self.waypoints:
             result['waypoints'] = self.waypoints
         return result
     
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ShipState':
+    def from_dict(cls, data: Dict[str, Any]) -> 'ShipState':
         """从字典创建 ShipState 对象"""
+        role = data.get('role', ShipRole.OTHER.value)
+        role_value = role if isinstance(role, ShipRole) else ShipRole(role)
         return cls(
             mmsi=data['mmsi'],
             latitude=data['latitude'],
@@ -166,7 +198,13 @@ class ShipState:
             course=data.get('course'),
             navigation_status=data.get('navigation_status', 'under_way_using_engine'),
             timestamp=data.get('timestamp', 0.0),
-            waypoints=data.get('waypoints')
+            waypoints=data.get('waypoints'),
+            start_time=data.get('start_time', 0.0),
+            end_time=data.get('end_time'),
+            role=role_value,
+            encounter_type=data.get('encounter_type'),
+            collision_avoidance_enabled=data.get('collision_avoidance_enabled', False),
+            route_id=data.get('route_id')
         )
 
 
@@ -248,8 +286,6 @@ class ScenarioConfig:
         # 验证场景持续时间
         if self.duration <= 0:
             raise ValueError(f"场景持续时间必须大于0: {self.duration}")
-        if self.duration > 7200:  # 最长2小时
-            raise ValueError(f"场景持续时间不应超过2小时(7200秒): {self.duration}")
         
         # 验证船舶MMSI唯一性
         mmsi_set = set()
@@ -278,7 +314,7 @@ class ScenarioConfig:
                         f"({distance:.6f}度，约{distance*111000:.1f}米)"
                     )
     
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         return {
             'scenario_id': self.scenario_id,
@@ -300,7 +336,7 @@ class ScenarioConfig:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ScenarioConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> 'ScenarioConfig':
         """从字典创建 ScenarioConfig 对象"""
         # 解析环境配置
         env_data = data.get('environment', {})
@@ -327,3 +363,124 @@ class ScenarioConfig:
             success_criteria=data.get('success_criteria', {}),
             description=data.get('description', ''),
         )
+
+
+@dataclass
+class RouteSegmentRef:
+    """主航线上的参考锚点。"""
+    route_progress: Optional[float] = None
+    route_segment_index: Optional[int] = None
+
+    def __post_init__(self):
+        if self.route_progress is None and self.route_segment_index is None:
+            raise ValueError("route_progress 和 route_segment_index 至少需要一个")
+        if self.route_progress is not None and not (0.0 <= self.route_progress <= 1.0):
+            raise ValueError(f"route_progress 必须在0到1之间: {self.route_progress}")
+        if self.route_segment_index is not None and self.route_segment_index < 0:
+            raise ValueError(f"route_segment_index 不能为负数: {self.route_segment_index}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
+        if self.route_progress is not None:
+            data['route_progress'] = self.route_progress
+        if self.route_segment_index is not None:
+            data['route_segment_index'] = self.route_segment_index
+        return data
+
+
+@dataclass
+class EncounterSpec:
+    """基于主航线的 encounter 描述。"""
+    encounter_type: ScenarioType
+    anchor: RouteSegmentRef
+    start_time: float = 0.0
+    end_time: Optional[float] = None
+    target_speed: float = 10.0
+    target_mmsi: int = 987654321
+    crossing_side: str = "starboard"
+    crossing_angle: float = 90.0
+    relative_distance_nm: float = 0.4
+    safe_separation_nm: float = 0.1
+    route_id: Optional[str] = None
+    title: str = ""
+
+    def __post_init__(self):
+        if self.start_time < 0:
+            raise ValueError(f"start_time不能为负数: {self.start_time}")
+        if self.end_time is not None and self.end_time < self.start_time:
+            raise ValueError("end_time不能早于start_time")
+        if self.target_speed <= 0:
+            raise ValueError(f"target_speed必须大于0: {self.target_speed}")
+        if self.relative_distance_nm <= 0:
+            raise ValueError(f"relative_distance_nm必须大于0: {self.relative_distance_nm}")
+        if self.safe_separation_nm < 0:
+            raise ValueError(f"safe_separation_nm不能为负数: {self.safe_separation_nm}")
+        if self.crossing_side not in ("starboard", "port"):
+            raise ValueError(f"crossing_side 必须是 starboard 或 port: {self.crossing_side}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            'type': self.encounter_type.value,
+            'anchor': self.anchor.to_dict(),
+            'start_time': self.start_time,
+            'target_speed': self.target_speed,
+            'target_mmsi': self.target_mmsi,
+            'crossing_side': self.crossing_side,
+            'crossing_angle': self.crossing_angle,
+            'relative_distance_nm': self.relative_distance_nm,
+            'safe_separation_nm': self.safe_separation_nm,
+        }
+        if self.end_time is not None:
+            data['end_time'] = self.end_time
+        if self.route_id:
+            data['route_id'] = self.route_id
+        if self.title:
+            data['title'] = self.title
+        return data
+
+
+@dataclass
+class RouteScenarioConfig:
+    """基于主航线编排的综合场景配置。"""
+    scenario_id: str
+    own_ship: ShipState
+    own_ship_route: List[List[float]]
+    encounters: List[EncounterSpec]
+    environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+    duration: float = 600.0
+    description: str = ""
+    map_path: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.scenario_id or not self.scenario_id.strip():
+            raise ValueError("scenario_id不能为空")
+        if len(self.own_ship_route) < 2:
+            raise ValueError("own_ship_route 至少需要两个航点")
+        if not self.encounters:
+            raise ValueError("至少需要一个 encounter")
+        if self.own_ship.role != ShipRole.OWN_SHIP:
+            self.own_ship.role = ShipRole.OWN_SHIP
+        self.own_ship.collision_avoidance_enabled = True
+        self.own_ship.waypoints = [list(point) for point in self.own_ship_route]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'scenario_id': self.scenario_id,
+            'scenario_type': ScenarioType.ROUTE_AWARE.value,
+            'description': self.description,
+            'duration': self.duration,
+            'map_path': self.map_path,
+            'environment': {
+                'weather_condition': self.environment.weather_condition.value,
+                'visibility': self.environment.visibility.value,
+                'water_area_type': self.environment.water_area_type.value,
+                'wind_speed': self.environment.wind_speed,
+                'wind_direction': self.environment.wind_direction,
+                'current_speed': self.environment.current_speed,
+                'current_direction': self.environment.current_direction,
+                'map_boundaries': self.environment.map_boundaries,
+            },
+            'own_ship': self.own_ship.to_dict(),
+            'own_ship_route': self.own_ship_route,
+            'encounters': [encounter.to_dict() for encounter in self.encounters],
+        }
